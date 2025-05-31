@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1890ff" />
+    
+    <!-- PWA相关meta标签 -->
+    <meta name="application-name" content="WhatNote" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="WhatNote" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="msapplication-TileColor" content="#1890ff" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    
+    <!-- 全屏相关 -->
+    <meta name="fullscreen" content="yes" />
+    <meta name="browsermode" content="application" />
+    <meta name="x5-fullscreen" content="true" />
+    <meta name="x5-page-mode" content="app" />
+    
+    <meta
+      name="description"
+      content="WhatNote - 基于AI的智能PDF笔记生成系统，支持视觉识别和智能注释"
+    />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <!--
+      manifest.json provides metadata used when your web app is installed on a
+      user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
+    -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    <!--
+      Notice the use of %PUBLIC_URL% in the tags above.
+      It will be replaced with the URL of the `public` folder during the build.
+      Only files inside the `public` folder can be referenced from the HTML.
+
+      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
+      work correctly both with client-side routing and a non-root public URL.
+      Learn how to configure a non-root public URL by running `npm run build`.
+    -->
+    <title>WhatNote - 智能笔记系统</title>
+    
+    <style>
+      /* 隐藏浏览器默认样式，提供应用级体验 */
+      body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      
+      /* 全屏样式 */
+      .fullscreen-app {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: #f0f2f5;
+        z-index: 9999;
+      }
+      
+      /* PWA安装提示 */
+      .pwa-install-banner {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: #1890ff;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        cursor: pointer;
+        z-index: 10000;
+        font-size: 14px;
+        display: none;
+        animation: slideIn 0.3s ease-out;
+      }
+      
+      @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+      
+      .pwa-install-banner:hover {
+        background: #096dd9;
+      }
+      
+      .pwa-install-banner .close-btn {
+        margin-left: 8px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>您需要启用JavaScript来运行此应用。</noscript>
+    
+    <!-- PWA安装提示横幅 -->
+    <div id="pwa-install-banner" class="pwa-install-banner" style="display: none;">
+      📱 安装WhatNote到桌面 
+      <span class="close-btn" onclick="this.parentElement.style.display='none'">×</span>
+    </div>
+    
+    <div id="root"></div>
+    <!--
+      This HTML file is a template.
+      If you open it directly in the browser, you will see an empty page.
+
+      You can add webfonts, meta tags, or analytics to this file.
+      The build step will place the bundled scripts into the <body> tag.
+
+      To begin the development, run `npm start` or `yarn start`.
+      To create a production bundle, use `npm run build` or `yarn build`.
+    -->
+    
+    <script>
+      // Service Worker注册
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js')
+            .then((registration) => {
+              console.log('✅ SW注册成功:', registration.scope);
+            })
+            .catch((error) => {
+              console.log('❌ SW注册失败:', error);
+            });
+        });
+      }
+      
+      // PWA安装提示
+      let deferredPrompt;
+      window.addEventListener('beforeinstallprompt', (e) => {
+        console.log('💡 PWA安装提示触发');
+        e.preventDefault();
+        deferredPrompt = e;
+        
+        // 显示自定义安装横幅
+        const banner = document.getElementById('pwa-install-banner');
+        banner.style.display = 'block';
+        
+        banner.addEventListener('click', () => {
+          banner.style.display = 'none';
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.then((choiceResult) => {
+            if (choiceResult.outcome === 'accepted') {
+              console.log('✅ 用户接受了安装');
+            } else {
+              console.log('❌ 用户拒绝了安装');
+            }
+            deferredPrompt = null;
+          });
+        });
+      });
+      
+      // 应用安装后的处理
+      window.addEventListener('appinstalled', (evt) => {
+        console.log('🎉 WhatNote已安装!');
+        document.body.classList.add('app-mode');
+      });
+      
+      // 检测是否在standalone模式运行（已安装的PWA）
+      if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+        console.log('🚀 应用在standalone模式运行');
+        document.body.classList.add('app-mode');
+        
+        // 禁用浏览器默认行为
+        document.addEventListener('contextmenu', (e) => e.preventDefault());
+        document.addEventListener('selectstart', (e) => e.preventDefault());
+        document.addEventListener('dragstart', (e) => e.preventDefault());
+      }
+      
+      // 全屏API支持
+      function enterFullscreen() {
+        const elem = document.documentElement;
+        if (elem.requestFullscreen) {
+          elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) {
+          elem.webkitRequestFullscreen();
+        } else if (elem.msRequestFullscreen) {
+          elem.msRequestFullscreen();
+        }
+      }
+      
+      // 快捷键支持
+      document.addEventListener('keydown', (e) => {
+        // F11全屏
+        if (e.key === 'F11') {
+          e.preventDefault();
+          enterFullscreen();
+        }
+        
+        // Ctrl+Shift+I 禁用开发者工具（在应用模式下）
+        if (document.body.classList.contains('app-mode') && 
+            e.ctrlKey && e.shiftKey && e.keyCode === 73) {
+          e.preventDefault();
+          return false;
+        }
+      });
+      
+      console.log('🎯 WhatNote应用初始化完成');
+    </script>
+  </body>
+</html>

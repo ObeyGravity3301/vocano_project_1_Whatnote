@@ -1,0 +1,190 @@
+# WhatNote项目 .gitignore
+
+# ===== Python相关 =====
+# 字节码文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C扩展
+*.so
+
+# 虚拟环境
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# 单元测试 / 覆盖率报告
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# ===== Node.js / 前端相关 =====
+# 依赖
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 生产构建
+/build
+/dist
+
+# 运行时数据
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# 前端缓存
+.cache/
+.parcel-cache
+
+# TypeScript编译输出
+*.tsbuildinfo
+
+# ===== 环境变量和配置 =====
+# 环境变量文件
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 配置文件（保留示例）
+.env.example
+
+# ===== 日志文件 =====
+# 所有类型日志
+*.log
+logs/
+llm_logs/
+board_logs/
+board_logs_backup_*/
+
+# 特定日志文件
+butler_log.json
+llm_interactions.log
+
+# ===== 临时文件和缓存 =====
+# 临时目录
+temp/
+tmp/
+uploads/temp/
+uploads/
+pages/
+
+# 备份文件
+*backup*
+*_backup_*
+备份/
+临时测试文件备份/
+whatnote_modified_files/
+*.backup
+*.bak
+
+# 应用状态文件
+app_state.json
+app_state.json.backup
+board_data.json
+
+# ===== 系统文件 =====
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ===== IDE和编辑器 =====
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ===== Electron相关 =====
+# Electron构建输出
+out/
+build/
+dist-electron/
+release-builds/
+
+# ===== 测试文件 =====
+# 测试相关（可选择性忽略）
+test_*.py
+*_test.py
+
+# 性能测试和调试文件
+test_annotation_*.py
+test_ai_*.py
+test_complete_*.py
+test_concurrent_*.py
+test_delay_*.py
+test_dynamic_*.py
+test_expert_*.py
+test_fast_*.py
+test_final_*.py
+test_frontend_*.py
+test_health_*.py
+test_improve_*.py
+test_intelligent_*.py
+test_mcp_*.py
+test_note_*.py
+test_pdf_*.py
+test_status_*.py
+test_task_*.py
+test_usernoteeditor_*.py
+test_vision_*.py
+
+# 报告文件
+naming_consistency_report_*.txt
+
+# ===== 特定HTML调试文件 =====
+# 调试和测试页面
+frontend_debug.html
+mcp_test_frontend.html
+
+# ===== 文档和指南（可选） =====
+# 如果不想提交某些文档，可以取消注释
+# *.md
+# !README.md
+
+# ===== 其他 =====
+# 包锁定文件（可选择性忽略）
+# package-lock.json
+
+# 运行时生成的文件
+*.pid
+*.lock 

@@ -1,0 +1,238 @@
+.course-explorer {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.explorer-header {
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.explorer-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #333;
+}
+
+.explorer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.course-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+
+.ant-tree-treenode {
+  padding: 8px 0 !important;
+}
+
+.ant-tree-node-content-wrapper {
+  transition: all 0.3s;
+  border-radius: 4px;
+  padding: 4px 8px !important;
+  width: 100%;
+}
+
+.ant-tree-node-content-wrapper:hover {
+  background-color: #e6f7ff !important;
+}
+
+/* 选中状态的样式 - 改为浅灰色，添加更多选择器确保覆盖 */
+.ant-tree-node-content-wrapper.ant-tree-node-selected,
+.ant-tree-treenode-selected .ant-tree-node-content-wrapper,
+.ant-tree .ant-tree-node-selected .ant-tree-node-content-wrapper,
+.course-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+  background-color: #f0f0f0 !important;
+  border-radius: 4px;
+  color: #333 !important;
+}
+
+.ant-tree-title {
+  font-size: 14px;
+  width: 100%;
+}
+
+/* 添加节点标题和操作按钮的样式 */
+.tree-node-title {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.node-title-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.node-title-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: #333;
+}
+
+.node-action-button {
+  visibility: hidden;
+  padding: 2px;
+  margin-left: 4px;
+}
+
+.tree-node-title:hover .node-action-button {
+  visibility: visible;
+}
+
+/* PDF列表样式 */
+.node-pdf-list {
+  margin-top: 4px;
+  padding-left: 16px;
+  border-left: 2px solid #f0f0f0;
+  width: 100%;
+}
+
+.pdf-list-item {
+  cursor: pointer;
+  padding: 2px 4px;
+  margin: 2px 0;
+  border-radius: 4px;
+  transition: background-color 0.3s;
+  display: flex;
+  align-items: center;
+}
+
+.pdf-list-item:hover {
+  background-color: #f5f5f5;
+}
+
+.pdf-title {
+  font-size: 12px;
+  color: #555;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 85%;
+}
+
+/* 底部区域样式 */
+.explorer-footer {
+  padding: 12px;
+  border-top: 1px solid #f0f0f0;
+  background-color: #fafafa;
+}
+
+.selected-course,
+.open-pdfs {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.selected-course-label,
+.open-pdfs-label {
+  font-weight: bold;
+  color: #333;
+  margin-right: 4px;
+}
+
+.selected-course-name {
+  color: #1890ff;
+}
+
+.pdf-list {
+  margin-top: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.open-pdf-item {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.open-pdf-item:hover {
+  transform: translateX(2px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.pdf-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #333;
+}
+
+/* PDF条目的响应式效果 */
+.open-pdf-item:active {
+  transform: translateX(1px);
+}
+
+/* 增强PDF列表项的交互效果 */
+.node-pdf-list .pdf-list-item {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.node-pdf-list .pdf-list-item:hover {
+  transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  opacity: 0.8;
+}
+
+.node-pdf-list .pdf-list-item:active {
+  transform: translateX(2px);
+}
+
+/* PDF右键菜单样式增强 */
+.node-pdf-list .pdf-list-item {
+  user-select: none;
+  -webkit-user-select: none;
+  position: relative;
+}
+
+/* 右键菜单激活状态 */
+.node-pdf-list .pdf-list-item:focus {
+  outline: 2px solid #1890ff;
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+/* PDF列表项的文字选择禁用 */
+.node-pdf-list .pdf-title {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 强制覆盖antd tree组件的选中状态蓝色背景 */
+.course-explorer .ant-tree-treenode.ant-tree-treenode-selected > .ant-tree-node-content-wrapper,
+.course-explorer .ant-tree-treenode-selected .ant-tree-node-content-wrapper,
+.course-explorer .ant-tree-node-content-wrapper-selected,
+.course-explorer .ant-tree .ant-tree-treenode-selected .ant-tree-node-content-wrapper {
+  background-color: #f0f0f0 !important;
+  background: #f0f0f0 !important;
+  color: #333 !important;
+}
+
+/* 确保hover状态不被选中状态覆盖 */
+.course-explorer .ant-tree-node-content-wrapper:hover:not(.ant-tree-node-selected) {
+  background-color: #e6f7ff !important;
+} 

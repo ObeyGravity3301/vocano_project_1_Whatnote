@@ -1,0 +1,51 @@
+{
+  "short_name": "WhatNote",
+  "name": "WhatNote - 智能笔记系统",
+  "description": "基于AI的智能PDF笔记生成系统",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any"
+    },
+    {
+      "src": "logo512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any"
+    },
+    {
+      "src": "logo192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1890ff",
+  "background_color": "#ffffff",
+  "orientation": "landscape-primary",
+  "scope": "/",
+  "categories": ["productivity", "education", "utilities"],
+  "shortcuts": [
+    {
+      "name": "上传PDF",
+      "short_name": "上传",
+      "description": "快速上传PDF文件",
+      "url": "/?action=upload",
+      "icons": [
+        {
+          "src": "logo192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

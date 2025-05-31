@@ -1,0 +1,276 @@
+/* 笔记编辑器和查看区样式 */
+.user-note-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background-color: white;
+}
+
+.user-note-editor .editor-toolbar {
+  padding: 8px 16px;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #fafafa;
+  flex-shrink: 0;
+  height: 40px;
+}
+
+.user-note-editor .note-editor {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.user-note-editor .note-text {
+  padding: 16px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  height: 100%;
+  flex: 1;
+}
+
+/* 动画进度条样式 */
+.animation-progress {
+  height: 4px;
+  background-color: #f0f0f0;
+  width: 100%;
+  position: relative;
+  margin-top: -4px;
+  flex-shrink: 0;
+}
+
+.animation-progress-bar {
+  height: 100%;
+  background-color: #1890ff;
+  transition: width 0.1s ease-in-out;
+}
+
+/* 保证标签内容填满空间 */
+.note-tabs {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ant-tabs-content {
+  flex: 1;
+  height: 100%;
+  min-height: 0; /* 确保flex容器可以收缩 */
+}
+
+.ant-tabs-tabpane {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tabs-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  flex: 1;
+}
+
+/* 高亮显示的差异部分 */
+.diff-highlight {
+  background-color: #e6f7ff;
+  padding: 2px;
+  border-radius: 2px;
+  margin: 0 2px;
+  animation: highlight-pulse 2s infinite;
+}
+
+@keyframes highlight-pulse {
+  0% { background-color: #e6f7ff; }
+  50% { background-color: #bae7ff; }
+  100% { background-color: #e6f7ff; }
+}
+
+/* 改进后的内容预览模态框 */
+.improved-content-preview {
+  max-height: 60vh;
+  overflow-y: auto;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  padding: 16px;
+  margin-bottom: 16px;
+  background-color: #fafafa;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 保证模态框按钮对齐 */
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* 当行发生变化时的高亮效果 */
+.diff-line-highlight {
+  background-color: rgba(24, 144, 255, 0.1);
+  animation: highlight-fade 1.5s forwards;
+}
+
+@keyframes highlight-fade {
+  0% {
+    background-color: rgba(24, 144, 255, 0.3);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* 动画过程中文本编辑区的样式 */
+.note-editor.animating {
+  background-color: #fafafa;
+  cursor: not-allowed;
+}
+
+/* 添加一些过渡效果 */
+.note-editor {
+  transition: background-color 0.3s ease;
+}
+
+/* 在动画过程中修改滚动条样式，增强视觉效果 */
+.animating::-webkit-scrollbar-thumb {
+  background-color: #1890ff;
+}
+
+/* 自动保存指示器 */
+.autosave-indicator {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  font-size: 12px;
+  color: #999;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.autosave-indicator.visible {
+  opacity: 1;
+}
+
+/* Markdown 样式 */
+.note-text {
+  line-height: 1.6;
+}
+
+.note-text h1,
+.note-text h2,
+.note-text h3,
+.note-text h4,
+.note-text h5,
+.note-text h6 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.note-text h1 {
+  font-size: 1.8em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.note-text h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.note-text h3 {
+  font-size: 1.25em;
+}
+
+.note-text p {
+  margin-bottom: 1em;
+}
+
+.note-text ul,
+.note-text ol {
+  padding-left: 2em;
+  margin-bottom: 1em;
+}
+
+.note-text li {
+  margin-bottom: 0.3em;
+}
+
+.note-text code {
+  background-color: rgba(27, 31, 35, 0.05);
+  border-radius: 3px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 85%;
+  padding: 0.2em 0.4em;
+}
+
+.note-text pre {
+  background-color: #f6f8fa;
+  border-radius: 3px;
+  padding: 16px;
+  overflow: auto;
+  margin-bottom: 1em;
+}
+
+.note-text pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.note-text blockquote {
+  border-left: 0.25em solid #dfe2e5;
+  color: #6a737d;
+  padding: 0 1em;
+  margin: 0 0 1em 0;
+}
+
+.note-text table {
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  width: 100%;
+  overflow: auto;
+}
+
+.note-text table th,
+.note-text table td {
+  border: 1px solid #dfe2e5;
+  padding: 6px 13px;
+}
+
+.note-text table tr {
+  background-color: #fff;
+  border-top: 1px solid #c6cbd1;
+}
+
+.note-text table tr:nth-child(2n) {
+  background-color: #f6f8fa;
+}
+
+.note-text img {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* 编辑器容器相对定位，让自动保存提示能正确定位 */
+.note-editor-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+} 

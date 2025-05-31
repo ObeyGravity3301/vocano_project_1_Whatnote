@@ -1,0 +1,219 @@
+/* 可拖动窗口的基本样式 */
+.draggable-window {
+  position: absolute;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  cursor: default;
+  min-width: 200px;
+  min-height: 150px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+.draggable-window:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.draggable-window:active {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* 窗口内容容器 */
+.window-content {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: white;
+  overflow: hidden;
+  border-radius: 8px;
+}
+
+/* 窗口标题栏 */
+.window-title-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 16px;
+  height: 40px;
+  background-color: #1890ff;
+  color: #fff;
+  cursor: move;
+  user-select: none;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+  font-size: 14px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* 窗口标题 */
+.window-title {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 100px);
+  color: white;
+  margin-right: 20px;
+}
+
+/* 窗口控制按钮容器 */
+.window-controls {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* 窗口控制按钮 */
+.window-control-button {
+  background: transparent;
+  border: none;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin-left: 4px;
+  border-radius: 4px;
+  font-size: 16px;
+  padding: 0;
+  outline: none; /* 移除焦点轮廓 */
+  position: relative;
+  z-index: 10; /* 确保按钮在最上层 */
+}
+
+.window-control-button:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.window-control-button:active {
+  background-color: rgba(255, 255, 255, 0.3);
+}
+
+.window-close-button:hover {
+  background-color: rgba(255, 0, 0, 0.4);
+}
+
+/* 增强按钮点击区域 */
+.window-control-button::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  right: -5px;
+  bottom: -5px;
+  z-index: -1;
+}
+
+/* 窗口内容区域 */
+.window-body {
+  flex: 1;
+  overflow: hidden;
+  background-color: #fff;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 窗口调整手柄样式 */
+.draggable-window .resize-handle {
+  position: absolute;
+  background-color: rgba(24, 144, 255, 0.05);
+  z-index: 100;
+}
+
+.draggable-window .resize-handle:hover {
+  background-color: rgba(24, 144, 255, 0.3);
+}
+
+.draggable-window .resize-handle-right {
+  right: 0;
+  top: 0;
+  cursor: e-resize;
+  width: 20px;
+  height: 100%;
+}
+
+.draggable-window .resize-handle-bottom {
+  bottom: 0;
+  left: 0;
+  cursor: s-resize;
+  height: 20px;
+  width: 100%;
+}
+
+.draggable-window .resize-handle-corner {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+  width: 30px;
+  height: 30px;
+  border-radius: 0 0 8px 0;
+  background-color: rgba(24, 144, 255, 0.08);
+}
+
+.draggable-window .resize-handle-corner:hover {
+  background-color: rgba(24, 144, 255, 0.4);
+}
+
+/* 特殊效果: 当被点击时有明显反馈 */
+.draggable-window .resize-handle:active {
+  background-color: rgba(24, 144, 255, 0.5);
+}
+
+/* 增强视觉反馈 */
+.draggable-window.resizing .resize-handle {
+  background-color: rgba(24, 144, 255, 0.4);
+}
+
+.draggable-window.resizing {
+  cursor: move;
+}
+
+/* 拖拽中 */
+.draggable-window.dragging {
+  pointer-events: none;
+}
+
+/* 全屏时特殊样式 */
+.draggable-window.fullscreen {
+  border-radius: 10px;
+  box-shadow: 0 5px 25px rgba(0, 0, 0, 0.2);
+  transition: all 0.3s ease-in-out;
+}
+
+/* 置顶窗口样式 */
+.draggable-window.pinned-window {
+  box-shadow: 0 4px 20px rgba(24, 144, 255, 0.3);
+  border: 2px solid rgba(24, 144, 255, 0.5);
+}
+
+.draggable-window.pinned-window .window-title-bar {
+  background-color: #1890ff !important;  /* 使用更明亮的蓝色 */
+}
+
+.draggable-window .window-control-button.active-control {
+  background-color: rgba(255, 255, 255, 0.3);
+  color: #fff;
+}
+
+.draggable-window .window-control-button.active-control:hover {
+  background-color: rgba(255, 255, 255, 0.4);
+}
+
+/* 按钮图标尺寸 */
+.window-control-button .anticon {
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+} 

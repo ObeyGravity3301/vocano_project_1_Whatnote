@@ -1,0 +1,4352 @@
+import React, { useState, useEffect, useRef } from "react";
+import { Layout, Button, Input, message, Upload, Tooltip, Modal, List, Avatar, Dropdown, Menu, Spin, Tabs } from "antd";
+import { FileAddOutlined, UploadOutlined, FilePdfOutlined, DeleteOutlined, PlusOutlined, DownOutlined, FileTextOutlined, VerticalAlignTopOutlined, ArrowsAltOutlined, CloseOutlined, RobotOutlined, BugOutlined, QuestionCircleOutlined } from '@ant-design/icons';
+import { Resizable } from 'react-resizable';
+import "antd/dist/reset.css";
+import "react-resizable/css/styles.css";
+import "./App.css";
+
+import PDFViewer from "./components/PDFViewer";
+import NoteWindow from "./components/NoteWindow";
+import CourseExplorer from "./components/CourseExplorer";
+import DraggableWindow from "./components/DraggableWindow";
+import UserNoteEditor from "./components/UserNoteEditor";
+import GlobalContextMenu from "./components/GlobalContextMenu";
+import BoardExpertPanel from "./components/BoardExpertPanel";
+import ButlerPanel from "./components/ButlerPanel";
+import LLMDebugPanel from "./components/LLMDebugPanel";
+import MarkdownMathRenderer from "./components/MarkdownMathRenderer";
+import TaskStatusIndicator from "./components/TaskStatusIndicator";
+import KeyboardShortcuts from "./components/KeyboardShortcuts";
+import api from './api'; // 导入API客户端
+
+const { Header, Sider, Content } = Layout;
+const { TabPane } = Tabs;
+
+// 预定义的窗口颜色列表
+const PDF_COLORS = [
+  '#1890ff', // 蓝色
+  '#52c41a', // 绿色
+  '#722ed1', // 紫色
+  '#fa8c16', // 橙色
+  '#eb2f96', // 玫红
+  '#faad14', // 黄色
+  '#13c2c2', // 青色
+  '#f5222d', // 红色
+];
+
+// 获取PDF颜色，根据ID分配固定颜色或使用自定义颜色
+const getPdfColor = (pdfId, colorKey = 'primary', customColor = null) => {
+  // 如果有自定义颜色，使用自定义颜色
+  if (customColor) {
+    switch (colorKey) {
+      case 'primary':
+        return customColor;
+      case 'light':
+        return `${customColor}20`; // 20是透明度
+      case 'dark':
+        // 转换为HSL并减少亮度
+        const color = customColor;
+        if (color.startsWith('#')) {
+          const r = parseInt(color.slice(1, 3), 16);
+          const g = parseInt(color.slice(3, 5), 16);
+          const b = parseInt(color.slice(5, 7), 16);
+          return `rgb(${Math.floor(r*0.8)}, ${Math.floor(g*0.8)}, ${Math.floor(b*0.8)})`;
+        }
+        return customColor;
+      default:
+        return customColor;
+    }
+  }
+  
+  // 如果没有ID，返回默认颜色
+  if (!pdfId) return '#1890ff';
+  
+  // 通过ID生成固定的颜色索引
+  const idSum = pdfId.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const colorIndex = idSum % PDF_COLORS.length;
+  
+  // 根据colorKey返回不同色调
+  switch (colorKey) {
+    case 'primary':
+      return PDF_COLORS[colorIndex];
+    case 'light':
+      return `${PDF_COLORS[colorIndex]}20`; // 20是透明度
+    case 'dark':
+      // 转换为HSL并减少亮度
+      const color = PDF_COLORS[colorIndex];
+      const r = parseInt(color.slice(1, 3), 16);
+      const g = parseInt(color.slice(3, 5), 16);
+      const b = parseInt(color.slice(5, 7), 16);
+      return `rgb(${Math.floor(r*0.8)}, ${Math.floor(g*0.8)}, ${Math.floor(b*0.8)})`;
+    default:
+      return PDF_COLORS[colorIndex];
+  }
+};
+
+// 用于生成唯一ID的函数
+const generateId = () => `id-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+// 在App.js顶部添加一个辅助函数来生成独立的展板ID
+const generateBoardId = (courseFileKey) => {
+  // 为每个课程文件生成一个独立的展板ID
+  // 格式: board-{courseFileKey}-{timestamp}
+  const timestamp = Date.now();
+  return `board-${courseFileKey}-${timestamp}`;
+};
+
+
+
+
+
+function App() {
+  // 添加一个状态来维护课程文件到展板ID的映射
+  const [courseFileBoardMap, setCourseFileBoardMap] = useState({});
+
+  // 添加一个辅助函数来获取或创建课程文件对应的展板ID
+  const getBoardIdForCourseFile = (courseFileKey) => {
+    if (!courseFileKey) return null;
+    
+    // 检查是否已经有映射的展板ID
+    if (courseFileBoardMap[courseFileKey]) {
+      return courseFileBoardMap[courseFileKey];
+    }
+    
+    // 为新的课程文件创建展板ID
+    const newBoardId = generateBoardId(courseFileKey);
+    setCourseFileBoardMap(prev => ({
+      ...prev,
+      [courseFileKey]: newBoardId
+    }));
+    
+    console.log(`🆕 为课程文件 ${courseFileKey} 创建新展板 ${newBoardId}`);
+    return newBoardId;
+  };
+
+  // 课程文件管理
+  const [courseFiles, setCourseFiles] = useState({});
+  const [currentFile, setCurrentFile] = useState(null);
+  const [activePdfId, setActivePdfId] = useState(null);
+  const [showPdfSelector, setShowPdfSelector] = useState(false);
+  const [courseData, setCourseData] = useState([]); // 存储课程数据
+  const [uploadModalVisible, setUploadModalVisible] = useState(false); // 上传PDF的Modal可见性
+  const [filesLoadedStatus, setFilesLoadedStatus] = useState({}); // 文件加载状态
+  
+  // 展板管理
+  const [currentBoardId, setCurrentBoardId] = useState(null);
+  
+  // 章节笔记相关状态
+  const [chapterNotes, setChapterNotes] = useState({});
+  const [showChapterNoteWindow, setShowChapterNoteWindow] = useState(false);
+  const [chapterNoteWindowPosition, setChapterNoteWindowPosition] = useState({ x: 300, y: 100 });
+  const [chapterNoteWindowSize, setChapterNoteWindowSize] = useState({ width: 600, height: 500 });
+  const [chapterNoteLoading, setChapterNoteLoading] = useState(false);
+  
+  // 专家LLM相关状态
+  const [expertWindowVisible, setExpertWindowVisible] = useState(false);
+  const [currentExpertBoardId, setCurrentExpertBoardId] = useState(null);
+  const [expertWindowPosition, setExpertWindowPosition] = useState({ x: 350, y: 150 });
+  const [expertWindowSize, setExpertWindowSize] = useState({ width: 550, height: 450 });
+  const [expertHistory, setExpertHistory] = useState({});  // 保存每个展板的专家对话历史
+  
+  // 展板笔记相关状态
+  const [boardNoteWindowVisible, setBoardNoteWindowVisible] = useState(false);
+  const [currentBoardNoteId, setCurrentBoardNoteId] = useState(null);
+  const [boardNoteWindowPosition, setBoardNoteWindowPosition] = useState({ x: 400, y: 200 });
+  const [boardNoteWindowSize, setBoardNoteWindowSize] = useState({ width: 500, height: 400 });
+  const [boardNotes, setBoardNotes] = useState({});  // 保存每个展板的笔记内容
+  
+  // 管家LLM相关状态
+  const [assistantQuery, setAssistantQuery] = useState('');
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantResponse, setAssistantResponse] = useState('');
+  const [assistantHistory, setAssistantHistory] = useState([]);
+  const [assistantWindowVisible, setAssistantWindowVisible] = useState(false);
+  const [assistantWindowPosition, setAssistantWindowPosition] = useState({ x: 400, y: 200 });
+  const [assistantWindowSize, setAssistantWindowSize] = useState({ width: 520, height: 400 });
+  const [pendingCommand, setPendingCommand] = useState(null);
+  
+  // 侧边栏宽度相关状态
+  const [siderWidth, setSiderWidth] = useState(280);
+  const [isResizingSider, setIsResizingSider] = useState(false);
+  
+  // 处理侧边栏宽度调整开始
+  const handleSiderResizeStart = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const startWidth = siderWidth;
+    const startX = e.clientX;
+    
+    // 设置拖拽状态
+    setIsResizingSider(true);
+    document.body.classList.add('resizing-sider');
+    
+    const handleMouseMove = (moveEvent) => {
+      // 计算拖动距离
+      const deltaX = moveEvent.clientX - startX;
+      
+      // 限制最小和最大宽度
+      const newWidth = Math.max(200, Math.min(600, startWidth + deltaX));
+      
+      // 实时更新状态
+      setSiderWidth(newWidth);
+    };
+    
+    const handleMouseUp = () => {
+      // 清除拖拽状态
+      setIsResizingSider(false);
+      document.body.classList.remove('resizing-sider');
+      
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
+  
+  // 当前激活的PDF文件和相关状态
+  const [pdfListModalVisible, setPdfListModalVisible] = useState(false);
+  
+  // 页面布局保存到localStorage的键名
+  const LAYOUT_STORAGE_KEY = 'whatnote-layout';
+
+  // 置顶窗口跟踪
+  const [pinnedWindows, setPinnedWindows] = useState([]);
+
+  // 调试面板相关状态
+  const [debugPanelVisible, setDebugPanelVisible] = useState(false);
+  const [debugPanelPosition, setDebugPanelPosition] = useState({ x: 50, y: 50 });
+  const [debugPanelSize, setDebugPanelSize] = useState({ width: 900, height: 600 });
+  
+  // 窗口高度状态
+  const [windowHeight, setWindowHeight] = useState(window.innerHeight);
+
+  // 初始化 - 从localStorage加载保存的布局
+  useEffect(() => {
+    try {
+      const savedLayout = localStorage.getItem(LAYOUT_STORAGE_KEY);
+      if (savedLayout) {
+        const layoutData = JSON.parse(savedLayout);
+        // 加载课程文件结构
+        setCourseFiles(layoutData.courseFiles || {});
+        
+        // 如果有上次使用的当前文件，恢复它
+        if (layoutData.currentFileKey) {
+          // 找到对应的课程文件
+          const courseFilesList = Object.entries(layoutData.courseFiles || {}).map(([key, pdfs]) => ({
+            key,
+            pdfs,
+            title: key.split('-').slice(1).join('-') // 从key中提取课程名称
+          }));
+          
+          const lastFile = courseFilesList.find(file => file.key === layoutData.currentFileKey);
+          if (lastFile) {
+            setCurrentFile(lastFile);
+            // 如果有上次活跃的PDF，也恢复它
+            if (layoutData.activePdfId) {
+              const activePdf = lastFile.pdfs.find(pdf => pdf.id === layoutData.activePdfId);
+              if (activePdf) {
+                setActivePdfId(layoutData.activePdfId);
+              }
+            }
+          }
+        }
+      }
+
+      // 检查API密钥配置
+      checkApiConfig();
+      
+      // 添加窗口大小变化监听
+      const handleResize = () => {
+        setWindowHeight(window.innerHeight);
+      };
+      
+      window.addEventListener('resize', handleResize);
+      
+      // 清理函数
+      return () => {
+        window.removeEventListener('resize', handleResize);
+      };
+    } catch (error) {
+      console.error('加载保存的布局失败:', error);
+    }
+  }, []);
+
+  // 检查API配置是否正确
+  const checkApiConfig = async () => {
+    try {
+      const data = await api.getConfigStatus();
+      
+      if (!data.qwen_api_configured) {
+        message.warning('通义千问API密钥未配置，笔记生成功能可能不可用。请在.env文件中配置QWEN_API_KEY');
+      }
+      
+      if (!data.qwen_vl_api_configured) {
+        message.warning('通义千问视觉API密钥未配置，图像识别功能不可用。请在.env文件中配置QWEN_VL_API_KEY');
+      }
+    } catch (error) {
+      console.error('检查API配置失败:', error);
+      
+      // 检查是否是连接错误
+      if (error.message.includes('Failed to fetch')) {
+        message.warning('无法连接到后端服务，请确保后端服务已启动');
+      }
+    }
+  };
+
+  // 保存当前布局到localStorage
+  const saveLayout = () => {
+    try {
+      // 创建一个可以序列化的对象
+      const serializableCourseFiles = {};
+      
+      for (const key in courseFiles) {
+        serializableCourseFiles[key] = courseFiles[key].map(pdf => {
+          // 创建一个不包含file对象的PDF副本
+          const { file, ...pdfWithoutFile } = pdf;
+          
+          // 确保fileUrl被保存，这是关键
+          if (!pdfWithoutFile.fileUrl && file instanceof File) {
+            // 如果没有fileUrl但有file对象，则使用serverFilename
+            pdfWithoutFile.fileUrl = `/materials/${encodeURIComponent(pdfWithoutFile.serverFilename)}`;
+          }
+          
+          // 如果fileUrl是blob URL，替换为服务器URL
+          if (pdfWithoutFile.fileUrl && pdfWithoutFile.fileUrl.startsWith('blob:') && pdfWithoutFile.serverFilename) {
+            pdfWithoutFile.fileUrl = `/materials/${encodeURIComponent(pdfWithoutFile.serverFilename)}`;
+            console.log(`将blob URL替换为服务器URL: ${pdfWithoutFile.fileUrl}`);
+          }
+          
+          return pdfWithoutFile;
+        });
+      }
+      
+      const layoutData = {
+        courseFiles: serializableCourseFiles,
+        currentFileKey: currentFile?.key,
+        activePdfId: activePdfId
+      };
+      
+      localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layoutData));
+      console.log('布局已保存');
+    } catch (error) {
+      console.error('保存布局失败:', error);
+    }
+  };
+
+  // 每当courseFiles变化时自动保存布局
+  useEffect(() => {
+    if (Object.keys(courseFiles).length > 0) {
+      saveLayout();
+    }
+  }, [courseFiles]);
+
+  // 获取当前活跃的PDF对象
+  const getActivePdf = () => {
+    if (!currentFile || !activePdfId) return null;
+    
+    const pdfs = courseFiles[currentFile.key] || [];
+    return pdfs.find(pdf => pdf.id === activePdfId) || null;
+  };
+
+  // 获取当前课程文件的所有可见PDF
+  const getVisiblePdfs = () => {
+    if (!currentFile) return [];
+    return (courseFiles[currentFile.key] || []).filter(pdf => 
+      pdf.windows.pdf.visible || 
+      pdf.windows.note.visible || 
+      pdf.windows.annotation.visible ||
+      (pdf.windows.answer && pdf.windows.answer.visible)
+    );
+  };
+
+  // 更新PDF对象的多个属性
+  const updatePdfProperties = (pdfId, properties) => {
+    if (!currentFile) return;
+    
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        filePdfs[pdfIndex] = {
+          ...filePdfs[pdfIndex],
+          ...properties
+        };
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+
+  // 更新PDF对象的某个属性
+  const updatePdfProperty = (pdfId, propertyName, value) => {
+    if (!currentFile) return;
+    
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        filePdfs[pdfIndex] = {
+          ...filePdfs[pdfIndex],
+          [propertyName]: value
+        };
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+
+  // 上传PDF
+  const handleFileChange = async (file) => {
+    if (!currentFile) {
+      message.error('请先选择一个课程文件');
+      return;
+    }
+    
+    // 如果参数是事件对象(有target属性)，则从事件中获取文件
+    // 否则假设参数直接就是文件对象(Upload组件的beforeUpload传入的)
+    const pdfFile = file.target && file.target.files ? file.target.files[0] : file;
+    
+    if (!pdfFile) {
+      console.warn('⚠️ 没有选择文件');
+      return;
+    }
+    
+    // 检查是否为PDF文件
+    if (pdfFile.type !== 'application/pdf') {
+      message.error('请上传PDF文件');
+      console.error('❌ 上传的不是PDF文件:', pdfFile.type);
+      return;
+    }
+
+    console.log('📄 开始上传PDF文件:', pdfFile.name);
+    
+    try {
+      console.log('🔄 发送文件上传请求到服务器');
+      
+      // 使用API客户端上传文件
+      const data = await api.uploadFile(pdfFile);
+      
+      if (!data || !data.filename) {
+        throw new Error('服务器未返回有效的文件名');
+      }
+      
+      // 创建新的PDF对象
+      const newPdfId = generateId();
+      
+      // 创建服务器文件URL，不再使用blob URL
+      const serverFilename = data.filename;
+      const fileUrl = `/materials/${encodeURIComponent(serverFilename)}`;
+      
+      console.log('服务器文件名:', serverFilename);
+      console.log('服务器文件URL:', fileUrl);
+      
+      const newPdf = {
+        id: newPdfId,
+        file: pdfFile,  // 保留原始文件对象作为备份
+        fileUrl: fileUrl,  // 使用服务器URL
+        clientFilename: pdfFile.name,  // 添加客户端文件名
+        filename: data.filename,
+        serverFilename: serverFilename,
+        currentPage: 1,
+        totalPages: data.pages || 0,
+        customColor: null,  // 添加自定义颜色字段
+        note: "",           // AI生成的整篇笔记
+        userNote: "",       // 用户的整篇笔记
+        pageAnnotations: {}, // AI生成的页面注释 {pageNum: "内容"}
+        pageAnnotationSources: {}, // 页面注释的来源 {pageNum: "text"|"vision"}
+        userPageNotes: {},   // 用户的页面笔记 {pageNum: "内容"}
+        windows: {
+          pdf: {
+            visible: true,
+            position: { x: 50, y: 20 },
+            size: { width: 680, height: 720 },
+            zIndex: 100
+          },
+          note: {
+            visible: false,
+            position: { x: 750, y: 20 },
+            size: { width: 520, height: 350 },
+            zIndex: 101
+          },
+          annotation: {
+            visible: false,
+            position: { x: 750, y: 390 },
+            size: { width: 520, height: 350 },
+            zIndex: 102
+          },
+          answer: {
+            visible: false,
+            position: { x: 300, y: 200 },
+            size: { width: 600, height: 350 },
+            zIndex: 103
+          },
+          userNote: {         // 用户整篇笔记窗口
+            visible: false,
+            position: { x: 750, y: 20 },
+            size: { width: 520, height: 350 },
+            zIndex: 104
+          },
+          userPageNote: {     // 用户页面笔记窗口
+            visible: false,
+            position: { x: 750, y: 390 },
+            size: { width: 520, height: 350 },
+            zIndex: 105
+          }
+        }
+      };
+      
+      // 在后端创建课程文件记录
+      try {
+        console.log('🔄 创建课程文件记录');
+        const courseId = currentFile.key;
+        
+        // 如果当前选择的是文件而不是课程文件夹，尝试获取其父级课程ID
+        let targetCourseId = courseId;
+        if (currentFile.isLeaf) {
+          // 从当前文件ID提取课程ID
+          const match = courseId.match(/^file-(course-\d+)/);
+          if (match && match[1]) {
+            targetCourseId = match[1];
+          } else {
+            // 如果无法从文件ID提取课程ID，则使用文件所属的课程ID
+            targetCourseId = currentFile.course_id || courseId;
+          }
+        }
+        
+        // ⚠️ 注意：这里不应该创建课程文件记录，因为上传PDF不等于创建新的展板文件
+        // PDF应该关联到当前选中的展板文件，而不是创建新的文件记录
+        // 创建课程文件记录
+        // await api.createCourseFile(targetCourseId, pdfFile.name, serverFilename);
+        
+        console.log('✅ PDF文件已上传，关联到当前展板文件:', currentFile.title);
+        // 创建成功后刷新左侧文件树（可选，如果需要显示更新后的状态）
+        // refreshCourses();
+      } catch (fileErr) {
+        console.error('❌ 处理PDF文件关联时出错:', fileErr);
+        // 这里的错误不应该影响PDF的正常使用，因为文件已经成功上传到服务器
+      }
+      
+      // 将新PDF添加到当前课程文件
+      setCourseFiles(prev => {
+        const filePdfs = [...(prev[currentFile.key] || [])];
+        filePdfs.push(newPdf);
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      });
+      
+      // 设置新上传的PDF为当前激活的PDF
+      setActivePdfId(newPdfId);
+      
+      console.log(`✅ 文件上传成功: ${data.filename}`);
+      message.success(`PDF文件 "${pdfFile.name}" 上传成功`);
+    } catch (err) {
+      console.error('❌ 文件上传失败:', err);
+      message.error(`上传PDF失败: ${err.message}`);
+    } finally {
+      setUploadModalVisible(false);
+      
+      // 清理上传组件的状态
+      const uploadInput = document.querySelector('input[type="file"]');
+      if (uploadInput) {
+        uploadInput.value = '';
+      }
+    }
+  };
+
+  // 生成整本笔记
+  const handleGenerateNote = async (pdfId) => {
+    // 获取指定的PDF文件，而不是依赖当前活动的PDF
+    const targetPdf = pdfId && currentFile ? 
+      courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId) : 
+      getActivePdf();
+      
+    if (!targetPdf) {
+      message.warning('请先选择一个PDF文件');
+      return;
+    }
+    
+    // 使用目标PDF的ID，而不是活动PDF的ID
+    const targetPdfId = targetPdf.id;
+    const serverFilename = targetPdf.serverFilename;
+    
+    console.log(`🔄 开始为 ${targetPdf.clientFilename || targetPdf.filename}(ID:${targetPdfId}) 生成整本笔记...`);
+    
+    // 显示笔记窗口
+    updatePdfProperty(targetPdfId, 'windows', {
+      ...targetPdf.windows,
+      note: {
+        ...targetPdf.windows.note,
+        visible: true
+      }
+    });
+    
+    // 设置加载状态
+    updatePdfProperty(targetPdfId, 'noteLoading', true);
+    
+    try {
+      // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后使用为课程文件生成的展板ID
+      let boardId = currentExpertBoardId || getBoardIdForCourseFile(currentFile?.key);
+      
+      // 如果没有currentExpertBoardId，设置它为课程文件对应的展板ID确保一致性
+      if (!currentExpertBoardId && currentFile) {
+        const mappedBoardId = getBoardIdForCourseFile(currentFile.key);
+        setCurrentExpertBoardId(mappedBoardId);
+        boardId = mappedBoardId;
+      }
+      
+      console.log(`📊 使用展板ID: ${boardId}`);
+      console.log(`📊 currentExpertBoardId: ${currentExpertBoardId}`);
+      console.log(`📊 currentFile.key: ${currentFile?.key}`);
+      
+      if (!boardId) {
+        throw new Error('无法确定展板ID');
+      }
+      
+      // 使用API客户端生成笔记
+      const data = await api.generatePdfNote(serverFilename, null, boardId);
+      
+      const noteContent = data.note || "无笔记内容";
+      
+      // 更新笔记内容
+      console.log(`✅ ${targetPdf.clientFilename || targetPdf.filename}(ID:${targetPdfId}) 笔记内容获取成功: ${noteContent.length}字符`);
+      console.log(`笔记内容预览: ${noteContent.substring(0, 100)}...`);
+      
+      // 更新note属性（原始AI生成的笔记）
+      updatePdfProperty(targetPdfId, 'note', noteContent);
+      message.success('笔记生成成功');
+    } catch (err) {
+      console.error("❌ 生成笔记失败:", err);
+      message.error("生成笔记失败");
+    } finally {
+      updatePdfProperty(targetPdfId, 'noteLoading', false);
+    }
+  };
+
+  // 为指定页面生成注释
+  const handleGenerateAnnotation = async (pdfId, userImproveRequest = null) => {
+    if (!currentFile) return;
+    
+    const pdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
+    if (!pdf) return;
+    
+    const pageNum = pdf.currentPage;
+    const filename = pdf.filename || pdf.clientFilename;
+    
+    console.log(`🔄 开始为 ${filename}(ID:${pdfId}) 第${pageNum}页生成注释...`);
+    
+    // 更新状态为"正在生成注释"
+    updatePdfProperty(pdfId, 'annotationLoading', true);
+    
+    try {
+      // 确保笔记窗口可见以便查看生成结果
+      if (!pdf.windows.annotation.visible) {
+        handleWindowChange(pdfId, 'annotation', { visible: true });
+      }
+      
+      // 获取当前页面已有的注释（如果有）
+      const currentAnnotation = pdf.pageAnnotations && pdf.pageAnnotations[pageNum] ? pdf.pageAnnotations[pageNum] : null;
+      
+      // 获取或创建一个会话ID
+      const sessionId = pdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // 如果没有会话ID，则保存新的会话ID
+      if (!pdf.sessionId) {
+        updatePdfProperty(pdfId, 'sessionId', sessionId);
+      }
+      
+      console.log(`使用API客户端生成注释，会话ID: ${sessionId}, 当前注释长度: ${currentAnnotation ? currentAnnotation.length : 0}字符`);
+      
+      // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后是currentFile.key
+      let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+      
+      // 如果没有currentExpertBoardId，设置它为currentFile.key确保一致性
+      if (!currentExpertBoardId && currentFile) {
+        setCurrentExpertBoardId(currentFile.key);
+        boardId = currentFile.key;
+      }
+      
+      console.log(`📊 注释生成使用展板ID: ${boardId}`);
+      
+      if (!boardId) {
+        throw new Error('无法确定展板ID');
+      }
+      
+      // 调用API客户端生成注释，首次生成时不传递currentAnnotation
+      const result = await api.generateAnnotation(
+        filename, 
+        pageNum, 
+        sessionId, 
+        currentAnnotation, 
+        userImproveRequest,
+        boardId // 传递展板ID
+      );
+      
+      // 更新注释 - 检查result.annotation或result.note字段
+      if (result && (result.annotation || result.note)) {
+        const annotation = result.annotation || result.note; // 使用annotation字段，如果不存在则使用note字段
+        const annotationSource = result.source || 'text';
+        
+        console.log(`收到注释内容: ${annotation.substring(0, 50)}... (${annotation.length}字符)`);
+        
+        // 更新页面注释
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            // 更新注释和来源
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              pageAnnotations: {
+                ...filePdfs[pdfIndex].pageAnnotations,
+                [pageNum]: annotation
+              },
+              pageAnnotationSources: {
+                ...filePdfs[pdfIndex].pageAnnotationSources,
+                [pageNum]: annotationSource
+              },
+              annotation: annotation, // 同时更新当前显示的注释
+              annotationLoading: false
+            };
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+        
+        message.success('笔记生成成功!');
+      } else {
+        console.error('注释生成响应中没有找到有效内容:', result);
+        message.error('未能生成有效笔记，请重试');
+        updatePdfProperty(pdfId, 'annotationLoading', false);
+      }
+    } catch (error) {
+      console.error(' ❌ 生成注释失败:', error);
+      message.error(`生成注释失败: ${error.message}`);
+      updatePdfProperty(pdfId, 'annotationLoading', false);
+    }
+  };
+
+  // 使用图像识别重新生成注释
+  const handleForceVisionAnnotate = async (pdfId, userImproveRequest = null) => {
+    const clickStartTime = performance.now();
+    console.log(`🚀 [FRONTEND-CLICK] 用户点击注释生成，时间戳: ${clickStartTime}`);
+    
+    // 如果没有传入pdfId，尝试使用当前活动的PDF
+    if (!pdfId) {
+      const activePdf = getActivePdf();
+      if (!activePdf) {
+        message.warning('请先选择一个PDF文件');
+        return;
+      }
+      pdfId = activePdf.id;
+    }
+    
+    const pdfFindTime = performance.now();
+    console.log(`📋 [FRONTEND-CLICK] PDF验证完成，耗时: ${(pdfFindTime - clickStartTime).toFixed(3)}ms`);
+    
+    // 从课程文件中获取指定的PDF
+    let targetPdf = null;
+    if (currentFile && courseFiles[currentFile.key]) {
+      targetPdf = courseFiles[currentFile.key].find(pdf => pdf.id === pdfId);
+    }
+    
+    if (!targetPdf) {
+      message.error('未找到指定的PDF文件');
+      return;
+    }
+    
+    const dataExtractionTime = performance.now();
+    const currentPage = targetPdf.currentPage;
+    const serverFilename = targetPdf.serverFilename;
+    
+    console.log(`📄 [FRONTEND-CLICK] 数据提取完成，文件: ${serverFilename}, 页码: ${currentPage}, 耗时: ${(dataExtractionTime - pdfFindTime).toFixed(3)}ms`);
+    
+    // 设置加载状态
+    const loadingStateTime = performance.now();
+    updatePdfProperty(pdfId, 'annotationLoading', true);
+    console.log(`⏳ [FRONTEND-CLICK] 加载状态设置完成，耗时: ${(performance.now() - loadingStateTime).toFixed(3)}ms`);
+    
+    // 显示注释窗口（如果未显示）
+    const windowShowTime = performance.now();
+    if (!targetPdf.windows.annotation.visible) {
+      updatePdfProperty(pdfId, 'windows', {
+        ...targetPdf.windows,
+        annotation: {
+          ...targetPdf.windows.annotation,
+          visible: true
+        }
+      });
+    }
+    console.log(`🪟 [FRONTEND-CLICK] 窗口显示检查完成，耗时: ${(performance.now() - windowShowTime).toFixed(3)}ms`);
+    
+    try {
+      // 使用sessionStorage存储当前会话ID
+      const sessionId = sessionStorage.getItem('annotation-session-id') || 
+                      `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      sessionStorage.setItem('annotation-session-id', sessionId);
+      
+      // 获取当前注释内容（如果有）
+      const currentAnnotation = targetPdf.pageAnnotations?.[currentPage] || targetPdf.annotation || '';
+      
+      console.log(`使用API客户端发送图像识别注释请求，当前注释长度: ${currentAnnotation.length}字符`);
+      
+      // 安全处理improveRequest，确保它是一个字符串而不是对象或DOM元素
+      let safeImproveRequest = null;
+      if (userImproveRequest) {
+        // 如果是字符串，直接使用
+        if (typeof userImproveRequest === 'string') {
+          safeImproveRequest = userImproveRequest;
+        } 
+        // 如果是对象且有值字段，使用值字段
+        else if (typeof userImproveRequest === 'object' && userImproveRequest.value) {
+          safeImproveRequest = userImproveRequest.value;
+        }
+        // 如果是事件对象或其他情况，使用默认值
+        else {
+          safeImproveRequest = "重新使用图像识别生成注释";
+        }
+      }
+      
+      // 判断是初次视觉识别还是有已存在的注释
+      const isInitialRecognition = !currentAnnotation || currentAnnotation.length === 0;
+      
+      if (isInitialRecognition) {
+        console.log(`首次视觉识别，无需传递当前注释`);
+      } else {
+        console.log(`基于已有注释(${currentAnnotation.length}字符)改进，传递改进提示: "${safeImproveRequest || '无'}"`);
+      }
+      
+      // 获取当前展板ID
+      // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后是currentFile.key
+      let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+      
+      // 如果没有currentExpertBoardId，设置它为currentFile.key确保一致性
+      if (!currentExpertBoardId && currentFile) {
+        setCurrentExpertBoardId(currentFile.key);
+        boardId = currentFile.key;
+      }
+      
+      console.log(`📊 图像识别使用展板ID: ${boardId || '无'}`);
+      
+      if (!boardId) {
+        throw new Error('无法确定展板ID');
+      }
+      
+      // 🔄 提交图像识别任务到动态任务队列
+      const getApiBaseUrl = () => {
+        if (process.env.REACT_APP_BACKEND_URL) {
+          return process.env.REACT_APP_BACKEND_URL;
+        }
+        return window.location.protocol + '//' + window.location.hostname + ':8000';
+      };
+
+      const baseUrl = getApiBaseUrl();
+      
+      // 提交动态任务
+      const taskResponse = await fetch(`${baseUrl}/api/expert/dynamic/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          board_id: boardId,
+          task_info: {
+            type: 'vision_annotation',
+            params: {
+              filename: serverFilename,
+              page_number: currentPage,
+              session_id: sessionId,
+              current_annotation: isInitialRecognition ? null : currentAnnotation,
+              improve_request: safeImproveRequest
+            }
+          }
+        })
+      });
+
+      if (!taskResponse.ok) {
+        throw new Error(`任务提交失败: ${taskResponse.status}`);
+      }
+
+      const taskData = await taskResponse.json();
+      console.log(`✅ 图像识别任务已提交: ${taskData.task_id}`);
+      
+      // 等待任务完成（轮询）
+      const pollTaskResult = async (taskId) => {
+        const maxAttempts = 60; // 最多等待5分钟
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+          const resultResponse = await fetch(`${baseUrl}/api/expert/dynamic/result/${taskId}`);
+          if (resultResponse.ok) {
+            const result = await resultResponse.json();
+            if (result.status === 'completed') {
+              return result;  // 返回完整的result对象，而不只是result.result
+            } else if (result.status === 'failed') {
+              throw new Error(result.error || '任务执行失败');
+            }
+          }
+          
+          // 等待5秒后重试
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          attempts++;
+        }
+        
+        throw new Error('任务超时');
+      };
+      
+      const data = await pollTaskResult(taskData.task_id);
+      
+      // 修复数据提取逻辑 - API返回的结构是 {status: 'completed', result: '内容'}
+      const annotationContent = data.result || data.note || data.annotation || "无注释内容";
+      const annotationSource = data.source || "vision"; // 获取注释来源，视觉模型默认为vision
+      
+      // 确保PDF仍然是当前活动的PDF
+      if (activePdfId === pdfId || !activePdfId) {
+        // 准备更新页面注释缓存
+        const updatedPageAnnotations = {
+        ...targetPdf.pageAnnotations,
+        [currentPage]: annotationContent
+        };
+      
+        // 准备更新注释来源缓存
+        const updatedAnnotationSources = {
+        ...targetPdf.pageAnnotationSources || {},
+        [currentPage]: annotationSource
+        };
+        
+        // 一次性更新所有相关属性
+        setCourseFiles(prev => {
+          const courseKey = currentFile.key;
+          const pdfs = [...(prev[courseKey] || [])];
+          const pdfIndex = pdfs.findIndex(pdf => pdf.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            // 创建更新后的PDF对象
+            pdfs[pdfIndex] = {
+              ...pdfs[pdfIndex],
+              pageAnnotations: updatedPageAnnotations,
+              pageAnnotationSources: updatedAnnotationSources,
+              annotation: annotationContent,  // 设置当前显示的注释内容
+              annotationLoading: false       // 同时更新加载状态
+            };
+            
+            return {
+              ...prev,
+              [courseKey]: pdfs
+            };
+          }
+          
+          return prev;
+        });
+      
+        console.log(`✅ 页面${currentPage}图像识别注释获取成功: ${annotationContent.length}字符`);
+        
+        // 记录LLM交互日志到调试面板
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `vision-annotation-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `图像识别注释: ${safeImproveRequest || '标准识别'}`,
+            response: annotationContent || '无响应',
+            requestBody: {
+              filename: serverFilename,
+              page_number: currentPage,
+              session_id: sessionId,
+              current_annotation: isInitialRecognition ? null : currentAnnotation,
+              improve_request: safeImproveRequest
+            },
+            metadata: {
+              operation: 'vision_annotation',
+              requestType: 'vision_annotation',
+              filename: serverFilename,
+              pageNumber: currentPage,
+              sessionId: sessionId,
+              streaming: false,
+              taskBased: true,
+              isInitialRecognition
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        
+        message.success('图像识别注释生成成功');
+      }
+    } catch (err) {
+      console.error("❌ 图像识别注释失败:", err);
+      message.error("图像识别注释失败");
+      
+      // 只有在发生错误时更新加载状态
+      if (activePdfId === pdfId || !activePdfId) {
+        updatePdfProperty(pdfId, 'annotationLoading', false);
+      }
+    }
+  };
+
+  // 处理页面变化，使用特定PDF的ID而不是活跃PDF
+  const handlePageChange = (newPage, specificPdfId = null) => {
+    // 如果提供了具体的PDF ID，使用它；否则使用活跃的PDF
+    const pdfId = specificPdfId || (getActivePdf()?.id);
+    if (!pdfId) {
+      console.error('handlePageChange: 无有效的PDF ID');
+      return;
+    }
+    
+    console.log(`更新PDF(${pdfId})的页码从${currentFile && courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId)?.currentPage || '未知'}到: ${newPage}`);
+    
+    // 从课程文件中获取对应的PDF
+    const targetPdf = currentFile && courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId);
+    if (!targetPdf) {
+      console.error('handlePageChange: 找不到目标PDF:', pdfId);
+      return;
+    }
+    
+    // 更新当前页码
+    setCourseFiles(prev => {
+      const courseKey = currentFile.key;
+      const pdfs = [...(prev[courseKey] || [])];
+      const pdfIndex = pdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        const updatedPdf = {
+          ...pdfs[pdfIndex],
+          currentPage: newPage
+        };
+        
+        // 如果该页已有缓存的注释，则更新当前显示的注释内容
+        if (updatedPdf.pageAnnotations && updatedPdf.pageAnnotations[newPage]) {
+          // 更新当前显示的注释内容为当前页的缓存注释
+          updatedPdf.annotation = updatedPdf.pageAnnotations[newPage];
+          console.log(`页面${newPage}已有缓存注释，内容长度: ${updatedPdf.pageAnnotations[newPage].length}字符`);
+        } else {
+          // 如果这个页面没有缓存的注释，清空当前显示的注释内容
+          // 避免显示上一页的注释内容
+          updatedPdf.annotation = '';
+          console.log(`页面${newPage}没有缓存的注释，显示为空`);
+        }
+        
+        // 注意：不再自动显示注释窗口，保留窗口当前的可见状态
+        
+        pdfs[pdfIndex] = updatedPdf;
+        
+        return {
+          ...prev,
+          [courseKey]: pdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+
+  // 处理窗口位置和大小变化
+  const handleWindowChange = (pdfId, windowName, changes) => {
+    setCourseFiles(prev => {
+      const courseKey = currentFile.key;
+      const pdfs = [...(prev[courseKey] || [])];
+      const pdfIndex = pdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        // 创建更新后的窗口配置
+        const updatedWindows = {
+          ...pdfs[pdfIndex].windows,
+          [windowName]: {
+            ...pdfs[pdfIndex].windows[windowName],
+            ...changes
+          }
+        };
+        
+        // 确保所有位置和大小更新都被正确保存
+        if (changes.position) {
+          updatedWindows[windowName].position = changes.position;
+        }
+        
+        if (changes.size) {
+          updatedWindows[windowName].size = changes.size;
+        }
+        
+        // 创建更新后的PDF对象
+        const updatedPdf = {
+          ...pdfs[pdfIndex],
+          windows: updatedWindows
+        };
+        
+        // 更新PDF数组
+        pdfs[pdfIndex] = updatedPdf;
+        
+        // 确保在状态更新后立即保存到localStorage
+        const updatedCourseFiles = {
+          ...prev,
+          [courseKey]: pdfs
+        };
+        
+        // 延迟保存到localStorage以提高性能
+        setTimeout(() => saveLayout(), 100);
+        
+        return updatedCourseFiles;
+      }
+      
+      return prev;
+    });
+  };
+
+  // 处理窗口关闭
+  const handleWindowClose = (pdfId, windowName) => {
+    setCourseFiles(prev => {
+      const courseKey = currentFile.key;
+      const pdfs = [...(prev[courseKey] || [])];
+      const pdfIndex = pdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        const updatedWindows = {
+          ...pdfs[pdfIndex].windows,
+          [windowName]: {
+            ...pdfs[pdfIndex].windows[windowName],
+            visible: false
+          }
+        };
+        
+        pdfs[pdfIndex] = {
+          ...pdfs[pdfIndex],
+          windows: updatedWindows
+        };
+        
+        return {
+          ...prev,
+          [courseKey]: pdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+
+  // 获取全局最高z-index（考虑所有窗口类型）
+  const getGlobalMaxZIndex = () => {
+    let maxZIndex = 100;
+    
+    // 检查所有课程的PDF窗口
+    Object.values(courseFiles).forEach(pdfs => {
+      const pdfArray = Array.isArray(pdfs) ? pdfs : [];
+      pdfArray.forEach(pdf => {
+        Object.values(pdf.windows).forEach(window => {
+          if (window.zIndex > maxZIndex) {
+            maxZIndex = window.zIndex;
+          }
+        });
+      });
+    });
+    
+    // 检查置顶窗口列表中的所有窗口
+    pinnedWindows.forEach(w => {
+      if (w.zIndex && w.zIndex > maxZIndex) {
+        maxZIndex = w.zIndex;
+      }
+    });
+    
+    // 检查其他固定z-index的窗口
+    if (debugPanelVisible) {
+      maxZIndex = Math.max(maxZIndex, 1000);
+    }
+    
+    if (expertWindowVisible) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    if (assistantWindowVisible) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    if (showChapterNoteWindow) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    return maxZIndex;
+  };
+
+  // 获取当前最高的zIndex
+  const getMaxZIndex = () => {
+    let maxZIndex = 100;
+    
+    // 检查PDF窗口
+    if (currentFile) {
+      const pdfs = courseFiles[currentFile.key] || [];
+      
+      pdfs.forEach(pdf => {
+        Object.values(pdf.windows).forEach(window => {
+          if (window.zIndex > maxZIndex) {
+            maxZIndex = window.zIndex;
+          }
+        });
+      });
+    }
+    
+    // 检查置顶窗口列表中的所有窗口
+    pinnedWindows.forEach(w => {
+      if (w.zIndex && w.zIndex > maxZIndex) {
+        maxZIndex = w.zIndex;
+      }
+    });
+    
+    // 检查其他固定z-index的窗口
+    // 调试面板：1000
+    if (debugPanelVisible) {
+      maxZIndex = Math.max(maxZIndex, 1000);
+    }
+    
+    // 如果专家LLM窗口可见
+    if (expertWindowVisible) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    // 如果管家LLM窗口可见
+    if (assistantWindowVisible) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    // 如果章节笔记窗口可见
+    if (showChapterNoteWindow) {
+      maxZIndex = Math.max(maxZIndex, 500);
+    }
+    
+    return maxZIndex;
+  };
+
+  // 获取普通窗口和置顶窗口的基础zIndex
+  const getBaseZIndices = () => {
+    // 普通窗口基础z-index: 100-999
+    const normalBase = 100;
+    
+    // 置顶窗口使用更高的范围: 1000以上
+    const pinnedBase = 1000;
+    
+    return { normalBase, pinnedBase };
+  };
+
+  // 通用窗口前置函数（处理非PDF窗口）
+  const handleBringNonPdfWindowToFront = (windowId, windowType) => {
+    console.log('🔼 非PDF窗口前置:', { windowId, windowType });
+    
+    // 检查窗口是否已经被置顶
+    const [type, id] = windowId.split(':');
+    const isPinned = pinnedWindows.some(w => w.pdfId === type && w.windowName === id);
+    const { normalBase, pinnedBase } = getBaseZIndices();
+    
+    console.log('🔍 非PDF窗口状态:', { isPinned, normalBase, pinnedBase, windowId });
+    
+    // 🔧 关键修复：获取全局所有PDF窗口的z-index信息
+    const allGlobalPdfWindows = [];
+    
+    // 遍历所有课程文件，收集所有PDF窗口信息
+    Object.values(courseFiles).forEach(pdfs => {
+      const pdfArray = Array.isArray(pdfs) ? pdfs : [];
+      pdfArray.forEach(pdf => {
+        Object.entries(pdf.windows).forEach(([wName, wData]) => {
+          if (wData.visible) {
+            allGlobalPdfWindows.push({
+              pdfId: pdf.id,
+              windowName: wName,
+              isPinned: pinnedWindows.some(w => w.pdfId === pdf.id && w.windowName === wName),
+              zIndex: wData.zIndex,
+              visible: wData.visible
+            });
+          }
+        });
+      });
+    });
+    
+    // 获取当前所有非PDF窗口的z-index
+    const allNonPdfWindows = [];
+    
+    // 添加专家LLM窗口
+    if (expertWindowVisible) {
+      allNonPdfWindows.push({
+        id: `expert:${currentExpertBoardId}`,
+        zIndex: pinnedWindows.find(w => w.pdfId === 'expert' && w.windowName === currentExpertBoardId)?.zIndex || 500,
+        isPinned: pinnedWindows.some(w => w.pdfId === 'expert' && w.windowName === currentExpertBoardId)
+      });
+    }
+    
+    // 添加管家LLM窗口
+    if (assistantWindowVisible) {
+      allNonPdfWindows.push({
+        id: 'butler:assistant',
+        zIndex: pinnedWindows.find(w => w.pdfId === 'butler' && w.windowName === 'assistant')?.zIndex || 500,
+        isPinned: pinnedWindows.some(w => w.pdfId === 'butler' && w.windowName === 'assistant')
+      });
+    }
+    
+    // 添加章节笔记窗口
+    if (showChapterNoteWindow && currentFile) {
+      allNonPdfWindows.push({
+        id: `chapter:${currentFile.key}`,
+        zIndex: pinnedWindows.find(w => w.pdfId === 'chapter' && w.windowName === currentFile.key)?.zIndex || 500,
+        isPinned: pinnedWindows.some(w => w.pdfId === 'chapter' && w.windowName === currentFile.key)
+      });
+    }
+    
+    // 添加调试面板
+    if (debugPanelVisible) {
+      allNonPdfWindows.push({
+        id: 'debug:panel',
+        zIndex: 1000,
+        isPinned: true // 调试面板总是置顶
+      });
+    }
+    
+    // 🔧 合并PDF窗口和非PDF窗口的z-index信息
+    const allWindowsZIndices = [
+      ...allGlobalPdfWindows.map(w => ({ ...w, windowType: 'pdf' })),
+      ...allNonPdfWindows.map(w => ({ ...w, windowType: 'nonPdf' }))
+    ];
+    
+    // 分离置顶和普通窗口
+    const pinnedZIndices = allWindowsZIndices
+      .filter(w => w.isPinned)
+      .map(w => w.zIndex)
+      .filter(z => typeof z === 'number');
+    
+    const normalZIndices = allWindowsZIndices
+      .filter(w => !w.isPinned)
+      .map(w => w.zIndex)
+      .filter(z => typeof z === 'number');
+    
+    console.log('📊 全局窗口Z-index分布:', { 
+      pinnedZIndices: pinnedZIndices.sort((a, b) => a - b), 
+      normalZIndices: normalZIndices.sort((a, b) => a - b),
+      totalPdfWindows: allGlobalPdfWindows.length,
+      totalNonPdfWindows: allNonPdfWindows.length,
+      windowId
+    });
+    
+    // 计算新的zIndex
+    let newZIndex;
+    if (isPinned) {
+      newZIndex = pinnedZIndices.length > 0 
+        ? Math.max(...pinnedZIndices) + 1 
+        : pinnedBase;
+      console.log('📌 置顶非PDF窗口新z-index:', newZIndex);
+    } else {
+      newZIndex = normalZIndices.length > 0 
+        ? Math.max(...normalZIndices) + 1 
+        : Math.max(normalBase, 500); // 非PDF窗口至少从500开始
+      
+      // 确保不超过置顶窗口的范围
+      if (newZIndex >= pinnedBase) {
+        newZIndex = pinnedBase - 1;
+      }
+      
+      console.log('🔢 普通非PDF窗口新z-index:', newZIndex);
+    }
+    
+    // 根据窗口类型更新对应的状态
+    if (type === 'expert') {
+      // 更新专家LLM窗口状态（通过pinnedWindows或直接CSS操作）
+      const expertWindow = document.querySelector(`[data-window-id="expert:${id}"]`);
+      if (expertWindow) {
+        expertWindow.style.zIndex = newZIndex;
+        console.log(`✅ 专家LLM窗口 z-index更新: → ${newZIndex}`);
+      }
+    } else if (type === 'butler') {
+      // 更新管家LLM窗口状态
+      const butlerWindow = document.querySelector(`[data-window-id="butler:${id}"]`);
+      if (butlerWindow) {
+        butlerWindow.style.zIndex = newZIndex;
+        console.log(`✅ 管家LLM窗口 z-index更新: → ${newZIndex}`);
+      }
+    } else if (type === 'chapter') {
+      // 更新章节笔记窗口状态
+      const chapterWindow = document.querySelector(`[data-window-id="chapter:${id}"]`);
+      if (chapterWindow) {
+        chapterWindow.style.zIndex = newZIndex;
+        console.log(`✅ 章节笔记窗口 z-index更新: → ${newZIndex}`);
+      }
+    }
+    
+    // 如果窗口被置顶，更新pinnedWindows中的zIndex
+    if (isPinned) {
+      setPinnedWindows(prev => prev.map(w => {
+        if (w.pdfId === type && w.windowName === id) {
+          return { ...w, zIndex: newZIndex };
+        }
+        return w;
+      }));
+    }
+    
+    return newZIndex;
+  };
+
+  // 切换窗口置顶状态
+  const handleToggleWindowPin = (windowId) => {
+    console.log('切换窗口置顶状态:', windowId);
+    
+    // 解析windowId（格式: pdfId:windowName 或 type:id）
+    const parts = windowId.split(':');
+    if (parts.length !== 2) {
+      console.error('无效的窗口ID格式:', windowId);
+      message.error('窗口置顶操作失败：无效的窗口ID');
+      return;
+    }
+    
+    const [type, id] = parts;
+    
+    // 检查窗口是否已被置顶
+    const isPinned = pinnedWindows.some(w => 
+      (w.pdfId === type && w.windowName === id) || 
+      (w.pdfId === windowId) // 支持旧格式
+    );
+    
+    const { normalBase, pinnedBase } = getBaseZIndices();
+    
+    if (isPinned) {
+      // 取消置顶
+      setPinnedWindows(prev => prev.filter(w => 
+        !(w.pdfId === type && w.windowName === id) && 
+        w.pdfId !== windowId
+      ));
+      
+      // 🔧 修复：取消置顶时，重新设置窗口z-index到正常范围
+      if (type !== 'expert' && type !== 'butler' && type !== 'chapter') {
+        setCourseFiles(prev => {
+          if (!currentFile || !currentFile.key) return prev;
+          
+          const courseKey = currentFile.key;
+          const pdfs = [...(prev[courseKey] || [])];
+          const pdfIndex = pdfs.findIndex(pdf => pdf.id === type);
+          
+          if (pdfIndex !== -1) {
+            // 计算普通窗口的新z-index
+            const allNormalWindows = pdfs.flatMap(pdf => 
+              Object.entries(pdf.windows)
+                .filter(([wName, wData]) => !pinnedWindows.some(w => w.pdfId === pdf.id && w.windowName === wName))
+                .map(([wName, wData]) => wData.zIndex)
+            );
+            
+            const maxNormalZIndex = allNormalWindows.length > 0 ? Math.max(...allNormalWindows) : normalBase;
+            const newZIndex = Math.min(maxNormalZIndex + 1, pinnedBase - 1);
+            
+            const updatedWindows = {
+              ...pdfs[pdfIndex].windows,
+              [id]: {
+                ...pdfs[pdfIndex].windows[id],
+                zIndex: newZIndex
+              }
+            };
+            
+            pdfs[pdfIndex] = {
+              ...pdfs[pdfIndex],
+              windows: updatedWindows
+            };
+            
+            console.log('取消置顶，重新设置PDF窗口z-index为:', newZIndex);
+            
+            return {
+              ...prev,
+              [courseKey]: pdfs
+            };
+          }
+          
+          return prev;
+        });
+      }
+      
+      console.log('窗口已取消置顶');
+      message.info('窗口已取消置顶');
+    } else {
+      // 置顶窗口 - 找到当前所有置顶窗口的最高z-index
+      let maxPinnedZIndex = pinnedBase;
+      
+      // 遍历置顶窗口列表
+      pinnedWindows.forEach(w => {
+        if (w.zIndex && w.zIndex > maxPinnedZIndex) {
+          maxPinnedZIndex = w.zIndex;
+        }
+      });
+      
+      // 遍历PDF窗口（用于兼容）
+      if (currentFile && currentFile.key) {
+        const pdfs = courseFiles[currentFile.key] || [];
+        pdfs.forEach(pdf => {
+          Object.entries(pdf.windows).forEach(([wName, wData]) => {
+            const wIsPinned = pinnedWindows.some(w => w.pdfId === pdf.id && w.windowName === wName);
+            if (wIsPinned && wData.zIndex > maxPinnedZIndex) {
+              maxPinnedZIndex = wData.zIndex;
+            }
+          });
+        });
+      }
+      
+      // 使新置顶的窗口z-index比现有置顶窗口更高
+      const newZIndex = Math.max(maxPinnedZIndex + 1, pinnedBase);
+      console.log('设置新的z-index:', newZIndex);
+      
+      // 对于PDF窗口，更新其z-index
+      if (type !== 'expert' && type !== 'butler' && type !== 'chapter') {
+        setCourseFiles(prev => {
+          if (!currentFile || !currentFile.key) return prev;
+          
+          const courseKey = currentFile.key;
+          const pdfs = [...(prev[courseKey] || [])];
+          const pdfIndex = pdfs.findIndex(pdf => pdf.id === type);
+          
+          if (pdfIndex !== -1) {
+            const updatedWindows = {
+              ...pdfs[pdfIndex].windows,
+              [id]: {
+                ...pdfs[pdfIndex].windows[id],
+                zIndex: newZIndex
+              }
+            };
+            
+            pdfs[pdfIndex] = {
+              ...pdfs[pdfIndex],
+              windows: updatedWindows
+            };
+            
+            console.log('更新PDF窗口z-index为:', newZIndex);
+            
+            return {
+              ...prev,
+              [courseKey]: pdfs
+            };
+          }
+          
+          return prev;
+        });
+      }
+      
+      // 添加到置顶窗口列表
+      setPinnedWindows(prev => [...prev, { 
+        pdfId: type, 
+        windowName: id, 
+        zIndex: newZIndex,
+        windowType: type === 'expert' ? 'expertLLM' : 
+                   type === 'butler' ? 'butlerLLM' : 
+                   type === 'chapter' ? 'chapterNote' : 'pdf'
+      }]);
+      
+      console.log('窗口已置顶');
+      message.success('窗口已置顶');
+    }
+  };
+  
+  // 窗口置顶（所有PDF的所有窗口中）- 保留向后兼容
+  const handleBringWindowToTop = (pdfId, windowName) => {
+    handleToggleWindowPin(`${pdfId}:${windowName}`);
+  };
+
+  // AI问答
+  const handleAsk = async (question) => {
+    const activePdf = getActivePdf();
+    if (!activePdf) {
+      message.warning('请先选择一个PDF文件');
+      return;
+    }
+    
+    if (!question.trim()) {
+      message.warning('请输入问题');
+      return;
+    }
+    
+    // 保存当前PDF的ID，防止异步请求过程中活动PDF变化
+    const pdfId = activePdf.id;
+    
+    // 更新问题和加载状态
+    updatePdfProperty(pdfId, 'question', question);
+    updatePdfProperty(pdfId, 'answerLoading', true);
+    
+    // 显示回答窗口
+    updatePdfProperty(pdfId, 'windows', {
+      ...activePdf.windows,
+      answer: {
+        visible: true,
+        position: { x: 300, y: 200 },
+        size: { width: 600, height: 350 },
+        zIndex: 103
+      }
+    });
+    
+    console.log(`🔄 开始AI问答，问题: "${question}"...`);
+    
+    // 初始化答案内容为空
+    updatePdfProperty(pdfId, 'answer', '');
+    
+    try {
+      // 使用WebSocket流式获取回答
+      const useStreamingApi = true; // 控制是否使用流式API
+      
+      if (useStreamingApi) {
+        // 创建WebSocket连接
+        const serverFilename = activePdf.serverFilename;
+        const wsUrl = api.getWebSocketUrl(`/materials/${serverFilename}/ask/stream`);
+        const socket = new WebSocket(wsUrl);
+        
+        socket.onopen = function() {
+          console.log('WebSocket连接已打开');
+          // 发送问题
+          socket.send(JSON.stringify({ question }));
+        };
+        
+        socket.onmessage = function(event) {
+          const data = JSON.parse(event.data);
+          
+          if (data.error) {
+            console.error('WebSocket错误:', data.error);
+            message.error('获取回答失败');
+            // 确保PDF仍然是当前活动的PDF
+            if (activePdfId === pdfId) {
+              updatePdfProperty(pdfId, 'answerLoading', false);
+            }
+            socket.close();
+            return;
+          }
+          
+          if (data.chunk) {
+            // 确保PDF仍然是当前活动的PDF
+            if (activePdfId === pdfId) {
+            // 更新答案，添加新的文本块
+              updatePdfProperty(pdfId, 'answer', prev => {
+                const currentPdf = getActivePdf();
+                if (currentPdf && currentPdf.id === pdfId) {
+                  const currentAnswer = currentPdf.answer || "";
+              return currentAnswer + data.chunk;
+                }
+                return prev;
+            });
+            }
+          }
+          
+          if (data.done) {
+            console.log('回答完成');
+            // 确保PDF仍然是当前活动的PDF
+            if (activePdfId === pdfId) {
+              updatePdfProperty(pdfId, 'answerLoading', false);
+            message.success('回答生成完成');
+            }
+            socket.close();
+          }
+        };
+        
+        socket.onerror = function(error) {
+          console.error('WebSocket错误:', error);
+          message.error('连接服务器失败');
+          // 确保PDF仍然是当前活动的PDF
+          if (activePdfId === pdfId) {
+            updatePdfProperty(pdfId, 'answerLoading', false);
+          }
+        };
+        
+        socket.onclose = function() {
+          console.log('WebSocket连接已关闭');
+          // 确保PDF仍然是当前活动的PDF
+          if (activePdfId === pdfId) {
+            updatePdfProperty(pdfId, 'answerLoading', false);
+          }
+        };
+      } else {
+        // 使用原有的REST API
+        const serverFilename = activePdf.serverFilename;
+        
+        // 调用API客户端发送问题
+        const data = await api.askQuestion(serverFilename, question);
+        const answerContent = data.answer || "无回答";
+        
+        // 确保PDF仍然是当前活动的PDF
+        if (activePdfId === pdfId) {
+        // 更新回答内容
+          updatePdfProperty(pdfId, 'answer', answerContent);
+        console.log(`✅ 获取AI回答成功: ${answerContent.length}字符`);
+        message.success('回答生成成功');
+        }
+      }
+    } catch (err) {
+      console.error("❌ AI问答失败:", err);
+      message.error("获取回答失败");
+    } finally {
+      // 确保PDF仍然是当前活动的PDF
+      if (activePdfId === pdfId) {
+        updatePdfProperty(pdfId, 'answerLoading', false);
+      }
+      setAssistantLoading(false);
+      setAssistantQuery(''); // 清空输入框
+    }
+  };
+
+  // 处理课程文件选择
+  const handleSelectFile = (fileNode) => {
+    setCurrentFile(fileNode);
+    const hasPdfs = courseFiles[fileNode.key] && courseFiles[fileNode.key].length > 0;
+    
+    if (hasPdfs) {
+      // 检查是否有PDF窗口已经打开
+      const pdfsWithOpenWindows = courseFiles[fileNode.key].filter(pdf => 
+        pdf.windows.pdf.visible || 
+        pdf.windows.note.visible || 
+        pdf.windows.annotation.visible ||
+        (pdf.windows.answer && pdf.windows.answer.visible)
+      );
+      
+      if (pdfsWithOpenWindows.length > 0) {
+        // 如果有已打开的PDF窗口，显示PDF选择列表
+        setPdfListModalVisible(true);
+      } else {
+        // 如果没有打开的PDF窗口，但有PDF文件，自动打开最近使用的PDF
+        const mostRecentPdf = courseFiles[fileNode.key].reduce((latest, current) => {
+          if (!latest) return current;
+          // 可以根据lastUsed时间或者其他标准来选择最近的PDF
+          // 这里简单选择第一个
+          return latest;
+        }, null);
+        
+        if (mostRecentPdf) {
+          console.log('自动重新打开PDF:', mostRecentPdf.clientFilename || mostRecentPdf.filename);
+          
+          // 自动选择并打开该PDF
+          setActivePdfId(mostRecentPdf.id);
+          
+          // 确保文件URL有效
+          if (mostRecentPdf.serverFilename) {
+            const serverUrl = `/materials/${encodeURIComponent(mostRecentPdf.serverFilename)}`;
+            if (!mostRecentPdf.fileUrl || mostRecentPdf.fileUrl.startsWith('blob:')) {
+              updatePdfProperty(mostRecentPdf.id, 'fileUrl', serverUrl);
+            }
+          }
+          
+          // 打开PDF查看器窗口
+          updatePdfProperty(mostRecentPdf.id, 'windows', {
+            ...mostRecentPdf.windows,
+            pdf: {
+              ...mostRecentPdf.windows.pdf,
+              visible: true
+            }
+          });
+          
+          message.success(`已重新打开 ${mostRecentPdf.clientFilename || mostRecentPdf.filename}`);
+        } else {
+          // 备选方案：显示PDF选择列表
+          setPdfListModalVisible(true);
+        }
+      }
+    } else {
+      // 如果没有PDF，直接提示上传
+      message.info(`请为 ${fileNode.title} 上传PDF文件`);
+    }
+    
+    // 如果章节笔记窗口已经打开，更新其标题
+    if (showChapterNoteWindow) {
+      // 这里只是更新窗口，不会自动打开
+      setShowChapterNoteWindow(true);
+    }
+  };
+
+  // 选择PDF文件
+  const handleSelectPdf = (pdfId) => {
+    setActivePdfId(pdfId);
+    
+    // 获取选择的PDF对象
+    const selectedPdf = courseFiles[currentFile.key].find(pdf => pdf.id === pdfId);
+    
+    if (selectedPdf) {
+      // 优先使用服务器URL，而不是blob URL
+      if (selectedPdf.serverFilename) {
+        // 使用服务器文件名创建新的URL
+        const serverUrl = `/materials/${encodeURIComponent(selectedPdf.serverFilename)}`;
+        console.log('使用服务器URL:', serverUrl);
+        
+        // 如果当前URL是blob URL或无效，替换为服务器URL
+        if (!selectedPdf.fileUrl || selectedPdf.fileUrl.startsWith('blob:')) {
+          updatePdfProperty(pdfId, 'fileUrl', serverUrl);
+        }
+      } 
+      // 如果没有服务器文件名但有文件对象，创建blob URL
+      else if (selectedPdf.file instanceof File && (!selectedPdf.fileUrl || !selectedPdf.fileUrl.startsWith('blob:'))) {
+        try {
+          const newUrl = URL.createObjectURL(selectedPdf.file);
+          console.log('创建新的blob URL:', newUrl);
+          updatePdfProperty(pdfId, 'fileUrl', newUrl);
+        } catch (error) {
+          console.error('创建blob URL失败:', error);
+        }
+      }
+      
+      // 如果该PDF当前没有任何可见窗口，则显示PDF查看器
+      if (!selectedPdf.windows.pdf.visible && 
+          !selectedPdf.windows.note.visible && 
+          !selectedPdf.windows.annotation.visible && 
+          !(selectedPdf.windows.answer && selectedPdf.windows.answer.visible)) {
+        
+        // 更新windows状态，显示PDF查看器
+        updatePdfProperty(pdfId, 'windows', {
+          ...selectedPdf.windows,
+          pdf: {
+            ...selectedPdf.windows.pdf,
+            visible: true
+          }
+        });
+      }
+    }
+    
+    setPdfListModalVisible(false);
+  };
+
+  // 上传到选中的课程文件
+  const handleUploadToCourse = () => {
+    if (!currentFile) {
+      message.warning('请先选择一个课程文件');
+      return;
+    }
+    
+    setUploadModalVisible(true);
+  };
+  
+  // 删除PDF文件
+  const handleDeletePdf = (pdfId) => {
+    if (!currentFile) return;
+    
+    // 首先获取要删除的PDF文件信息
+    const pdfToDelete = courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId);
+    
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const filteredPdfs = filePdfs.filter(pdf => pdf.id !== pdfId);
+      
+      return {
+        ...prev,
+        [currentFile.key]: filteredPdfs
+      };
+    });
+    
+    // 如果删除的是当前激活的PDF，清空激活的PDF
+    if (activePdfId === pdfId) {
+      setActivePdfId(null);
+    }
+    
+    // 如果PDF对象中包含blob URL，则释放它
+    if (pdfToDelete?.fileUrl && pdfToDelete.fileUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(pdfToDelete.fileUrl);
+      } catch (error) {
+        console.error('释放Blob URL失败:', error);
+      }
+    }
+    
+    // 清理上传组件的状态
+    setPdfListModalVisible(false);
+    
+    message.success('PDF文件已删除');
+  };
+
+  // 更新用户笔记
+  const updateUserNote = (pdfId, content) => {
+    updatePdfProperty(pdfId, 'userNote', content);
+  };
+  
+  // 更新用户页面笔记
+  const updateUserPageNote = (pdfId, pageNum, content) => {
+    const activePdf = getActivePdf();
+    if (!activePdf) return;
+    
+    updatePdfProperty(pdfId, 'userPageNotes', {
+      ...activePdf.userPageNotes,
+      [pageNum]: content
+    });
+  };
+
+  // 处理更新用户笔记
+  const handleUpdateNote = (pdfId, content) => {
+    console.log('🔄 App - 更新用户笔记:', {pdfId, contentLength: content?.length || 0});
+    updateUserNote(pdfId, content);
+  };
+  
+  // 处理更新用户页面笔记
+  const handleUpdateUserPageNote = (pdfId, pageNum, content) => {
+    console.log('🔄 App - 更新用户页面笔记:', {pdfId, pageNum, contentLength: content?.length || 0});
+    updateUserPageNote(pdfId, pageNum, content);
+  };
+  
+  // 处理更新注释
+  const handleUpdateAnnotation = (pdfId, pageNum, content) => {
+    console.log('🔄 App - 更新注释:', {pdfId, pageNum, contentLength: content?.length || 0});
+    
+    // 获取PDF对象
+    const targetPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
+    if (!targetPdf) return;
+    
+    // 更新页面注释
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        filePdfs[pdfIndex] = {
+          ...filePdfs[pdfIndex],
+          pageAnnotations: {
+            ...filePdfs[pdfIndex].pageAnnotations,
+            [pageNum]: content
+          },
+          annotation: content // 同时更新当前显示的注释
+        };
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+  
+  // 处理改进注释
+  const handleImproveAnnotation = async (pdfId, pageNum, content, improvePrompt) => {
+    console.log('🔄 App - 改进注释:', {pdfId, pageNum, contentLength: content?.length || 0, improvePrompt});
+    
+    // 获取PDF对象
+    const targetPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
+    if (!targetPdf) return;
+    
+    // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后是currentFile.key
+    let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+    
+    // 如果没有currentExpertBoardId，设置它为currentFile.key确保一致性
+    if (!currentExpertBoardId && currentFile) {
+      setCurrentExpertBoardId(currentFile.key);
+      boardId = currentFile.key;
+    }
+
+    console.log(`📊 改进注释使用展板ID: ${boardId}`);
+    
+    // 设置加载状态
+    updatePdfProperty(pdfId, 'annotationLoading', true);
+    
+    try {
+      // 获取或创建一个会话ID
+      const sessionId = targetPdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // 记录请求体用于调试
+      const requestBody = {
+        current_annotation: content,
+        improve_request: improvePrompt,
+        board_id: boardId
+      };
+      
+      console.log('🔄 App - 改进注释请求体:', JSON.stringify(requestBody, null, 2));
+      
+      // 🔄 提交改进注释任务到动态任务队列
+      const getApiBaseUrl = () => {
+        if (process.env.REACT_APP_BACKEND_URL) {
+          return process.env.REACT_APP_BACKEND_URL;
+        }
+        return window.location.protocol + '//' + window.location.hostname + ':8000';
+      };
+
+      const baseUrl = getApiBaseUrl();
+      
+      // 提交动态任务
+      const taskResponse = await fetch(`${baseUrl}/api/expert/dynamic/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          board_id: boardId,
+          task_info: {
+            type: 'improve_annotation',
+            params: {
+              filename: targetPdf.serverFilename,
+              page_number: pageNum,
+              current_annotation: content,
+              improve_request: improvePrompt,
+              session_id: sessionId
+            }
+          }
+        })
+      });
+
+      if (!taskResponse.ok) {
+        throw new Error(`任务提交失败: ${taskResponse.status}`);
+      }
+
+      const taskData = await taskResponse.json();
+      console.log(`✅ 改进注释任务已提交: ${taskData.task_id}`);
+      
+      // 等待任务完成（轮询）
+      const pollTaskResult = async (taskId) => {
+        const maxAttempts = 60; // 最多等待5分钟
+        let attempts = 0;
+        
+        while (attempts < maxAttempts) {
+          const resultResponse = await fetch(`${baseUrl}/api/expert/dynamic/result/${taskId}`);
+          if (resultResponse.ok) {
+            const result = await resultResponse.json();
+            if (result.status === 'completed') {
+              return result;  // 返回完整的result对象，而不只是result.result
+            } else if (result.status === 'failed') {
+              throw new Error(result.error || '任务执行失败');
+            }
+          }
+          
+          // 等待5秒后重试
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          attempts++;
+        }
+        
+        throw new Error('任务超时');
+      };
+      
+      const result = await pollTaskResult(taskData.task_id);
+      
+      // 记录LLM交互日志到调试面板
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `improve-annotation-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `改进注释: ${improvePrompt || '无特定要求'}`,
+          response: result.result || result || '无响应',
+          requestBody: requestBody,
+          metadata: {
+            operation: 'improve_annotation',
+            requestType: 'improve_annotation',
+            filename: targetPdf.serverFilename,
+            pageNumber: pageNum,
+            sessionId: sessionId,
+            streaming: false,
+            taskBased: true,
+            boardId: boardId
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
+      
+      // 修复数据提取逻辑 - API返回的结构是 {status: 'completed', result: '内容'}
+      const improvedAnnotation = result.result || result.note || result.annotation || result;
+      
+      if (improvedAnnotation && improvedAnnotation !== '无注释内容') {
+        // 更新页面注释
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              pageAnnotations: {
+                ...filePdfs[pdfIndex].pageAnnotations,
+                [pageNum]: improvedAnnotation
+              },
+              annotation: improvedAnnotation, // 同时更新当前显示的注释
+              annotationLoading: false
+            };
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+        
+        message.success('注释已改进');
+      } else {
+        console.error('改进注释响应中没有找到有效内容:', result);
+        message.error('改进注释失败，请重试');
+        updatePdfProperty(pdfId, 'annotationLoading', false);
+      }
+    } catch (error) {
+      console.error('❌ 改进注释失败:', error);
+      message.error(`改进注释失败: ${error.message}`);
+      updatePdfProperty(pdfId, 'annotationLoading', false);
+    }
+  };
+  
+  // 处理改进用户页面笔记
+  const handleImproveUserPageNote = async (pdfId, pageNum, content, improvePrompt) => {
+    console.log('🔄 App - 改进用户页面笔记:', {pdfId, pageNum, contentLength: content?.length || 0, improvePrompt});
+    
+    // 调用已有的handleImproveNote函数，设置isPageNote为true
+    return handleImproveNote(pdfId, content, improvePrompt, true);
+  };
+
+  // AI完善笔记内容
+  const handleImproveNote = async (pdfId, content, improvePrompt = '', isPageNote = false) => {
+    try {
+      console.log('🚀 App - 开始笔记改进流程', {
+        pdfId,
+        contentLength: content?.length || 0,
+        isPageNote,
+        improvePrompt
+      });
+      
+      // 获取PDF对象
+      const currentPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
+      if (!currentPdf) {
+        console.error('❌ App - 找不到PDF对象:', pdfId);
+        return content;
+      }
+      
+      const pageNum = isPageNote ? currentPdf.currentPage : null;
+      let propertyToUpdate = isPageNote ? 
+        (pageNum ? `userPageNoteLoading_${pageNum}` : null) : 
+        'userNoteLoading';
+      
+      // 🎯 关键修复：判断是AI笔记还是用户笔记
+      // 如果正在改进的内容来自于pdf.note，则更新note字段
+      // 如果正在改进的内容来自于pdf.userNote，则更新userNote字段
+      const isAiNote = content === currentPdf.note; // 判断是否为AI笔记
+      console.log('📊 App - 笔记类型判断:', {
+        isAiNote,
+        isPageNote,
+        contentLength: content?.length || 0,
+        aiNoteLength: currentPdf.note?.length || 0,
+        userNoteLength: currentPdf.userNote?.length || 0
+      });
+      
+      // 🎯 关键修复：根据笔记类型设置正确的加载状态
+      if (!isPageNote) {
+        propertyToUpdate = isAiNote ? 'noteLoading' : 'userNoteLoading';
+      }
+      
+      console.log('📊 App - 笔记改进状态:', {
+        pdfFilename: currentPdf.filename || currentPdf.clientFilename,
+        pageNum,
+        propertyToUpdate,
+        isAiNote
+      });
+      
+      // 设置加载状态
+      if (propertyToUpdate) {
+        console.log('🔄 App - 设置加载状态:', propertyToUpdate);
+        updatePdfProperty(pdfId, propertyToUpdate, true);
+      }
+      
+      console.log(`🔄 开始通过AI完善整篇笔记...`);
+      console.log(`👉 用户改进提示: "${improvePrompt}"`);
+      
+      // 构建请求数据
+      const requestData = { 
+        content, 
+        improve_prompt: improvePrompt || "" 
+      };
+      
+      // 将当前展板ID添加到请求中
+      if (currentExpertBoardId) {
+        requestData.board_id = currentExpertBoardId;
+        console.log(`👉 使用展板ID: ${currentExpertBoardId}`);
+      }
+      
+      console.log('📤 App - 发送API请求:', {
+        filename: currentPdf.filename || currentPdf.clientFilename,
+        requestData: { ...requestData, content: requestData.content ? `${requestData.content.substring(0, 50)}...` : '无内容' }
+      });
+      
+      // 调用API完善笔记
+      const response = await api.improveMaterialNote(
+        currentPdf.filename || currentPdf.clientFilename, 
+        requestData
+      );
+      
+      console.log('📥 App - 收到API响应:', {
+        hasImprovedNote: !!response?.improved_note,
+        improvedNoteLength: response?.improved_note?.length || 0
+      });
+
+      if (response && response.improved_note) {
+        // 获取改进后的笔记内容
+        const improvedNote = response.improved_note;
+        
+        console.log(`✅ 笔记已完善，内容长度: ${improvedNote.length} 字符`);
+        console.log(`改进后的内容前100字符: ${improvedNote.substring(0, 100)}...`);
+        
+        // 🎯 关键修复：根据笔记类型更新正确的字段
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            if (isPageNote && pageNum) {
+              // 更新页面笔记
+              console.log('💾 App - 更新页面笔记:', {
+                pageNum,
+                improvedNoteLength: improvedNote.length
+              });
+              
+              filePdfs[pdfIndex] = {
+                ...filePdfs[pdfIndex],
+                userPageNotes: {
+                  ...filePdfs[pdfIndex].userPageNotes,
+                  [pageNum]: improvedNote
+                },
+                [`userPageNoteLoading_${pageNum}`]: false
+              };
+            } else {
+              // 🎯 关键修复：根据笔记类型更新正确的字段
+              if (isAiNote) {
+                // 更新AI笔记
+                console.log('💾 App - 更新AI笔记:', {
+                  improvedNoteLength: improvedNote.length,
+                  preview: improvedNote.substring(0, 50) + '...'
+                });
+                
+                filePdfs[pdfIndex] = {
+                  ...filePdfs[pdfIndex],
+                  note: improvedNote,           // 更新note字段
+                  noteLoading: false,          // 重置noteLoading
+                  userNoteLoading: false       // 也重置userNoteLoading
+                };
+              } else {
+                // 更新用户笔记
+                console.log('💾 App - 更新用户笔记:', {
+                  improvedNoteLength: improvedNote.length,
+                  preview: improvedNote.substring(0, 50) + '...'
+                });
+                
+                filePdfs[pdfIndex] = {
+                  ...filePdfs[pdfIndex],
+                  userNote: improvedNote,       // 更新userNote字段
+                  userNoteLoading: false       // 重置userNoteLoading
+                };
+              }
+            }
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+        
+        if (isPageNote && pageNum) {
+          message.success(`第${pageNum}页笔记已完善`);
+        } else {
+          message.success('笔记已完善');
+        }
+        
+        return improvedNote;
+      } else {
+        console.error('❌ App - 笔记完善响应不包含改进后的内容:', response);
+        message.error('笔记完善失败: 响应无效');
+        
+        // 重置加载状态
+        if (propertyToUpdate) {
+          updatePdfProperty(pdfId, propertyToUpdate, false);
+        }
+        
+        return content;
+      }
+    } catch (error) {
+      console.error('❌ App - 笔记完善失败:', error);
+      message.error('笔记完善失败，请重试');
+      
+      // 重置加载状态
+      const pageNum = isPageNote ? (currentFile?.key ? courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId)?.currentPage : null) : null;
+      const propertyToUpdate = isPageNote ? 
+        (pageNum ? `userPageNoteLoading_${pageNum}` : null) : 
+        'userNoteLoading';
+      
+      if (propertyToUpdate) {
+        updatePdfProperty(pdfId, propertyToUpdate, false);
+      }
+      
+      return content;
+    }
+  };
+
+  // 更新章节笔记
+  const updateChapterNote = (chapterKey, content) => {
+    setChapterNotes(prev => ({
+      ...prev,
+      [chapterKey]: content
+    }));
+    
+    // 存储到localStorage以持久化保存
+    localStorage.setItem('whatnote-chapter-notes', JSON.stringify({
+      ...chapterNotes,
+      [chapterKey]: content
+    }));
+  };
+  
+  // 处理章节笔记AI完善
+  const handleImproveChapterNote = async (content, improvePrompt = '') => {
+    if (!currentFile) return content;
+    
+    try {
+      // 获取当前章节下的所有PDF内容作为参考资料
+      const allPdfs = courseFiles[currentFile.key] || [];
+      if (allPdfs.length === 0) {
+        message.warning('当前章节没有PDF文件，无法完善笔记');
+        return content;
+      }
+      
+      // 使用第一个PDF文件进行完善
+      const firstPdf = allPdfs[0];
+      
+      // 设置加载状态
+      setChapterNoteLoading(true);
+      
+      console.log(`🔄 开始通过AI完善章节笔记...`);
+      console.log(`👉 用户改进提示: "${improvePrompt}"`);
+      
+      // 使用API客户端完善笔记
+      const requestData = { 
+        content, 
+        improve_prompt: improvePrompt || "" 
+      };
+      
+      // 将当前展板ID添加到请求中
+      if (currentExpertBoardId) {
+        requestData.board_id = currentExpertBoardId;
+        console.log(`📋 使用展板ID: ${currentExpertBoardId}`);
+      }
+      
+      // 调用API完善笔记
+      const data = await api.improveMaterialNote(firstPdf.serverFilename, requestData);
+      
+      // 提取改进后的笔记内容
+      const improvedContent = data.improved_note || content;
+      console.log(`✅ 章节笔记完善成功，字符数: ${improvedContent.length}`);
+      
+      // 更新章节笔记状态 
+      setChapterNotes(prev => ({
+        ...prev,
+        [currentFile.key]: improvedContent
+      }));
+      
+      message.success('章节笔记完善成功');
+
+      // 确保加载状态结束
+      setChapterNoteLoading(false);
+      
+      return improvedContent;
+    } catch (err) {
+      console.error("❌ 完善章节笔记失败:", err);
+      message.error("完善章节笔记失败");
+      
+      // 确保加载状态结束
+      setChapterNoteLoading(false);
+      
+      return content;
+    }
+  };
+  
+  // 加载章节笔记
+  useEffect(() => {
+    try {
+      const savedNotes = localStorage.getItem('whatnote-chapter-notes');
+      if (savedNotes) {
+        setChapterNotes(JSON.parse(savedNotes));
+      }
+    } catch (error) {
+      console.error('加载章节笔记失败:', error);
+    }
+  }, []);
+  
+  // 当前活动的PDF
+  const activePdf = getActivePdf();
+  
+  // 获取当前注释内容
+  const getCurrentAnnotation = () => {
+    if (!activePdf) return "";
+    return activePdf.pageAnnotations[activePdf.currentPage] || "";
+  };
+
+  // 显示指定PDF的窗口
+  const showPdfWindow = (pdfId, windowType) => {
+    if (!currentFile) return;
+    
+    const pdfs = courseFiles[currentFile.key] || [];
+    const pdf = pdfs.find(p => p.id === pdfId);
+    if (!pdf) return;
+    
+    setActivePdfId(pdfId);
+    
+    updatePdfProperty(pdfId, 'windows', {
+      ...pdf.windows,
+      [windowType]: {
+        ...pdf.windows[windowType],
+        visible: true
+      }
+    });
+    
+    message.success(`已打开 ${pdf.filename} 的${getWindowTypeName(windowType)}窗口`);
+  };
+  
+  // 获取窗口类型的中文名称
+  const getWindowTypeName = (windowType) => {
+    switch(windowType) {
+      case 'pdf': return 'PDF查看器';
+      case 'note': return 'AI笔记';
+      case 'annotation': return 'AI注释';
+      case 'answer': return 'AI问答';
+      case 'userNote': return '我的笔记';
+      case 'userPageNote': return '页面笔记';
+      default: return '窗口';
+    }
+  };
+  
+  // 新建窗口的菜单项生成
+  const generateNewWindowMenu = (pdf) => {
+    return [
+      {
+        key: 'pdf',
+        label: 'PDF查看器',
+        onClick: () => showPdfWindow(pdf.id, 'pdf')
+      },
+      {
+        key: 'note',
+        label: 'AI笔记窗口',
+        onClick: () => showPdfWindow(pdf.id, 'note')
+      },
+      {
+        key: 'annotation',
+        label: 'AI注释窗口',
+        onClick: () => showPdfWindow(pdf.id, 'annotation')
+      },
+      {
+        key: 'userNote',
+        label: '我的笔记窗口',
+        onClick: () => showPdfWindow(pdf.id, 'userNote')
+      },
+      {
+        key: 'userPageNote',
+        label: '当前页笔记',
+        onClick: () => showPdfWindow(pdf.id, 'userPageNote')
+      },
+      {
+        key: 'answer',
+        label: 'AI问答窗口',
+        onClick: () => showPdfWindow(pdf.id, 'answer')
+      },
+    ];
+  };
+
+  // 生成PDF窗口的右键菜单选项
+  const generatePdfContextMenu = (pdfId, windowType) => {
+    const pdf = courseFiles[currentFile?.key]?.find(p => p.id === pdfId);
+    if (!pdf) return [];
+    
+    const baseMenuItems = [
+      {
+        label: '置顶窗口',
+        onClick: () => handleBringWindowToTop(pdfId, windowType),
+        icon: <VerticalAlignTopOutlined />
+      },
+      {
+        label: '关闭窗口',
+        onClick: () => handleWindowClose(pdfId, windowType),
+        icon: <CloseOutlined />
+      }
+    ];
+    
+    // 针对不同类型的窗口添加特定选项
+    switch (windowType) {
+      case 'pdf':
+        return [
+          ...baseMenuItems,
+          {
+            label: '打开笔记窗口',
+            onClick: () => showPdfWindow(pdfId, 'note'),
+            icon: <FileTextOutlined />
+          },
+          {
+            label: '打开注释窗口',
+            onClick: () => showPdfWindow(pdfId, 'annotation'),
+            icon: <FileTextOutlined />
+          },
+          {
+            label: '打开我的笔记',
+            onClick: () => showPdfWindow(pdfId, 'userNote'),
+            icon: <FileTextOutlined />
+          }
+        ];
+      case 'note':
+        return [
+          ...baseMenuItems,
+          {
+            label: '改进笔记',
+            onClick: () => handleImproveNote(pdfId, pdf.note),
+            icon: <FileTextOutlined />
+          },
+          {
+            label: '复制到我的笔记',
+            onClick: () => {
+              updateUserNote(pdfId, pdf.note);
+              showPdfWindow(pdfId, 'userNote');
+            },
+            icon: <FileTextOutlined />
+          }
+        ];
+      case 'annotation':
+        return [
+          ...baseMenuItems,
+          {
+            label: '使用视觉模型重新生成',
+            onClick: () => handleForceVisionAnnotate(pdfId),
+            icon: <FileTextOutlined />
+          },
+          {
+            label: '复制到页面笔记',
+            onClick: () => {
+              const currentAnnotation = pdf.pageAnnotations[pdf.currentPage] || '';
+              updateUserPageNote(pdfId, pdf.currentPage, currentAnnotation);
+              showPdfWindow(pdfId, 'userPageNote');
+            },
+            icon: <FileTextOutlined />
+          }
+        ];
+      case 'userNote':
+      case 'userPageNote':
+        const isPageNote = windowType === 'userPageNote';
+        return [
+          ...baseMenuItems,
+          {
+            label: '改进笔记',
+            onClick: () => {
+              const content = isPageNote 
+                ? pdf.userPageNotes[pdf.currentPage] || ''
+                : pdf.userNote || '';
+              handleImproveNote(pdfId, content, isPageNote);
+            },
+            icon: <FileTextOutlined />
+          }
+        ];
+      default:
+        return baseMenuItems;
+    }
+  };
+
+  // 生成章节笔记窗口的右键菜单选项
+  const generateChapterContextMenu = () => {
+    if (!currentFile) return [];
+
+    return [
+      {
+        label: '置顶窗口',
+        onClick: () => handleBringWindowToTop(currentFile.key, 'chapterNote'),
+        icon: <VerticalAlignTopOutlined />
+      },
+      {
+        label: '改进笔记',
+        onClick: handleImproveChapterNote,
+        icon: <FileTextOutlined />
+      },
+      {
+        label: '关闭窗口',
+        onClick: () => setShowChapterNoteWindow(false),
+        icon: <CloseOutlined />
+      }
+    ];
+  };
+
+  // 检查窗口是否被置顶
+  const isWindowPinned = (pdfId, windowName) => {
+    return pinnedWindows.some(w => w.pdfId === pdfId && w.windowName === windowName);
+  };
+
+  // 获取窗口标题
+  const getWindowTitle = (pdf, windowName) => {
+    const filename = pdf.filename || pdf.clientFilename || '未命名文件';
+    let typeLabel = '';
+    
+    switch(windowName) {
+      case 'pdf': 
+        return `${filename}`;
+      case 'note': 
+        typeLabel = 'AI笔记';
+        break;
+      case 'annotation': 
+        typeLabel = `第${pdf.currentPage}页注释`;
+        break;
+      case 'answer': 
+        typeLabel = 'AI回答';
+        break;
+      case 'userNote': 
+        typeLabel = '我的笔记';
+        break;
+      case 'userPageNote': 
+        typeLabel = `第${pdf.currentPage}页笔记`;
+        break;
+      case 'chapterNote':
+        return `章节笔记: ${currentFile?.title || ''}`;
+      default: 
+        typeLabel = '窗口';
+    }
+    
+    return `${filename} - ${typeLabel}`;
+  };
+
+  // 渲染PDF相关窗口
+  const renderPdfWindow = (pdf, windowType = 'pdf') => {
+    // 如果窗口不可见，则不渲染
+    if (!pdf.windows[windowType]?.visible) return null;
+    
+    // 获取窗口配置
+    const windowConfig = pdf.windows[windowType];
+    const pdfColor = getPdfColor(pdf.id, 'primary', pdf.customColor);
+    
+    // 根据窗口类型设置标题和内容
+    let title = getWindowTitle(pdf, windowType);
+    let content = null;
+    
+    // 输出调试日志
+    if (windowType === 'note' || windowType === 'userNote') {
+      console.log(`🔍 渲染${windowType}窗口:`, {
+        pdfId: pdf.id,
+        noteLength: pdf.note?.length || 0,
+        userNoteLength: pdf.userNote?.length || 0,
+        notePreview: pdf.note ? pdf.note.substring(0, 50) + '...' : '无内容'
+      });
+    }
+    
+    // 开发环境调试信息
+    const debugInfo = process.env.NODE_ENV !== 'production' ? (
+      <div style={{
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        background: 'rgba(0,0,0,0.7)',
+        color: 'white',
+        padding: '2px 5px',
+        fontSize: '9px',
+        borderRadius: 3,
+        zIndex: 1000,
+        maxWidth: '200px',
+        overflow: 'hidden'
+      }}>
+        <div>窗口类型: {windowType}</div>
+        <div>PDF ID: {pdf.id.substring(0, 8)}...</div>
+      </div>
+    ) : null;
+    
+    // 根据窗口类型渲染不同内容
+    switch (windowType) {
+      case 'pdf':
+        content = (
+          <PDFViewer 
+            file={pdf}
+            currentPage={pdf.currentPage || 1}
+            onPageChange={(pageNumber) => handlePageChange(pageNumber, pdf.id)}
+            onContextMenu={(event) => handleContextMenu('pdf', null, { x: event.clientX, y: event.clientY }, { pdfId: pdf.id, filename: pdf.filename || pdf.clientFilename })}
+            pdfId={pdf.id}
+            filename={pdf.filename || pdf.clientFilename}
+            onGenerateNote={() => handleGenerateNote(pdf.id)}
+            onGenerateAnnotation={() => handleGenerateAnnotation(pdf.id)}
+            onLoadError={(error) => console.error("PDF加载错误:", error)}
+            expertBoardId={currentExpertBoardId}
+            sessionId={pdf.sessionId}
+            onAnnotate={(pageNum, content) => handleUpdateAnnotation(pdf.id, pageNum, content)}
+            onImproveAnnotation={(pageNum, content, prompt) => handleImproveAnnotation(pdf.id, pageNum, content, prompt)}
+            onForceVisionAnnotate={(prompt) => handleForceVisionAnnotate(pdf.id, prompt)}
+            aiAnnotations={pdf.aiAnnotations || {}}
+            userAnnotations={pdf.userAnnotations || {}}
+            aiPageNotes={pdf.aiPageNotes || {}}
+            userPageNotes={pdf.userPageNotes || {}}
+            aiNoteLoading={pdf.aiNoteLoading || false}
+            userNoteLoading={pdf.userNoteLoading || false}
+            getLoadingStatus={(pageNum, type) => {
+              const key = `${type}PageNoteLoading_${pageNum}`;
+              return pdf[key] || false;
+            }}
+            onUpdateUserPageNote={(pageNum, content) => handleUpdateUserPageNote(pdf.id, pageNum, content)}
+            onImproveUserPageNote={(pageNum, content, prompt) => handleImproveUserPageNote(pdf.id, pageNum, content, prompt)}
+          />
+        );
+        break;
+      case 'note':
+        content = (
+          <NoteWindow 
+            content={pdf.note || ''}
+            type="note"
+            loading={pdf.noteLoading || false}
+            filename={pdf.filename || pdf.clientFilename}
+            pageNumber={pdf.currentPage}
+            onImprove={(content, prompt) => handleImproveNote(pdf.id, content, prompt)}
+            onChange={(content) => updatePdfProperty(pdf.id, 'note', content)}
+          />
+        );
+        break;
+      case 'annotation':
+        content = (
+          <NoteWindow 
+            content={pdf.pageAnnotations && pdf.pageAnnotations[pdf.currentPage] ? pdf.pageAnnotations[pdf.currentPage] : ''}
+            type="annotation"
+            loading={pdf.annotationLoading || false}
+            filename={pdf.filename || pdf.clientFilename}
+            pageNumber={pdf.currentPage}
+            source={pdf.pageAnnotationSources && pdf.pageAnnotationSources[pdf.currentPage] ? pdf.pageAnnotationSources[pdf.currentPage] : 'text'}
+            onForceVisionAnnotate={(prompt) => handleForceVisionAnnotate(pdf.id, prompt)}
+            onImprove={(content, prompt) => handleImproveAnnotation(pdf.id, pdf.currentPage, content, prompt)}
+            onChange={(content) => handleUpdateAnnotation(pdf.id, pdf.currentPage, content)}
+          />
+        );
+        break;
+      case 'answer':
+        content = (
+          <div className="answer-container">
+            <div className="answer-question">
+              <strong>问题:</strong> {pdf.question || '无问题'}
+            </div>
+            <div className="answer-content">
+              {pdf.answerLoading ? (
+                <Spin tip="思考中..." />
+              ) : (
+                <MarkdownMathRenderer>{typeof pdf.answer === 'string' ? (pdf.answer || '无回答') : String(pdf.answer || '无回答')}</MarkdownMathRenderer>
+              )}
+            </div>
+          </div>
+        );
+        break;
+      case 'userNote':
+        content = (
+          <UserNoteEditor
+            aiContent={pdf.note || ''} 
+            content={pdf.userNote || ''}
+            onSave={(content) => handleUpdateNote(pdf.id, content)}
+            loading={pdf.userNoteLoading || false}
+            editorTitle="我的笔记"
+            color={pdfColor}
+            onAIImprove={(content) => {
+              console.log('🚀 App - 调用笔记改进函数，内容长度:', content?.length || 0);
+              const improvePrompt = window.prompt('请输入改进提示（例如：用中文）', '用中文');
+              if (improvePrompt) {
+                console.log('👉 App - 用户输入的改进提示:', improvePrompt);
+                return handleImproveNote(pdf.id, content, improvePrompt);
+              } else {
+                console.log('❌ App - 用户取消了改进操作');
+                return Promise.resolve(content); // 用户取消，返回原内容
+              }
+            }}
+          />
+        );
+        break;
+      case 'userPageNote':
+        content = (
+          <UserNoteEditor
+            aiContent={pdf.pageAnnotations && pdf.pageAnnotations[pdf.currentPage] ? pdf.pageAnnotations[pdf.currentPage] : ''} 
+            content={pdf.userPageNotes && pdf.userPageNotes[pdf.currentPage] ? pdf.userPageNotes[pdf.currentPage] : ''} 
+            onSave={(content) => handleUpdateUserPageNote(pdf.id, pdf.currentPage, content)}
+            loading={pdf[`userPageNoteLoading_${pdf.currentPage}`] || false}
+            editorTitle={`第${pdf.currentPage}页笔记`}
+            color={pdfColor}
+            onAIImprove={(content) => {
+              console.log('🚀 App - 调用页面笔记改进函数，内容长度:', content?.length || 0);
+              const improvePrompt = window.prompt('请输入改进提示（例如：用中文）', '用中文');
+              if (improvePrompt) {
+                console.log('👉 App - 用户输入的改进提示:', improvePrompt);
+                return handleImproveUserPageNote(pdf.id, pdf.currentPage, content, improvePrompt);
+              } else {
+                console.log('❌ App - 用户取消了改进操作');
+                return Promise.resolve(content); // 用户取消，返回原内容
+              }
+            }}
+          />
+        );
+        break;
+      default:
+        content = <div>未知窗口类型: {windowType}</div>;
+    }
+    
+    // 使用DraggableWindow组件渲染窗口
+    return (
+      <DraggableWindow
+        key={`${pdf.id}-${windowType}`}
+        title={title}
+        defaultPosition={windowConfig.position}
+        defaultSize={windowConfig.size}
+        onClose={() => handleWindowClose(pdf.id, windowType)}
+        onDragStop={(e, data) => {
+          handleWindowChange(pdf.id, windowType, { position: { x: data.x, y: data.y } });
+        }}
+        onResize={(e, dir, ref, delta, pos) => {
+          const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+          handleWindowChange(pdf.id, windowType, { size: newSize });
+        }}
+        zIndex={windowConfig.zIndex || 100}
+        windowId={`${pdf.id}:${windowType}`}
+        windowType={windowType}
+        onContextMenu={() => generatePdfContextMenu(pdf.id, windowType)}
+        onBringToFront={() => handleBringWindowToFront(pdf.id, windowType)}
+        isPinned={isWindowPinned(pdf.id, windowType)}
+        onTogglePin={() => handleToggleWindowPin(`${pdf.id}:${windowType}`)}
+        titleBarColor={pdfColor}  // 使用PDF的专属颜色（包含自定义颜色）
+        onColorChange={(color) => updatePdfColor(pdf.id, color)}  // 传递颜色更新函数
+        currentColor={pdfColor}  // 传递当前颜色
+        showColorPicker={windowType === 'pdf'}  // 只在PDF窗口显示颜色选择器
+        resizable
+      >
+        {debugInfo}
+        {content}
+      </DraggableWindow>
+    );
+  };
+
+  // 处理全局右键菜单命令
+  const handleContextMenuCommand = (command, data) => {
+    console.log('右键菜单命令:', command, data);
+    
+    // 先查找目标PDF
+    let targetPdf = null;
+    if (data && data.pdfId) {
+      const pdfFiles = currentFile ? courseFiles[currentFile.key] || [] : [];
+      targetPdf = pdfFiles.find(pdf => pdf.id === data.pdfId);
+    } else if (activePdf) {
+      targetPdf = activePdf;
+    }
+    
+    switch(command) {
+      case 'generate_page_note':
+          if (targetPdf) {
+            // 检查是否存在注释，存在则表示是重新生成
+            const hasAnnotation = targetPdf.pageAnnotations && targetPdf.pageAnnotations[targetPdf.currentPage];
+            
+            if (hasAnnotation) {
+              // 已有注释，显示修改意见框（重新生成）
+              Modal.confirm({
+                title: '重新生成页面注释',
+                content: (
+                  <div>
+                    <p>您是否希望提供修改建议？（选填）</p>
+                    <Input.TextArea 
+                      id="page-note-suggestion"
+                      placeholder="请输入您的修改建议（可选）"
+                      rows={4}
+                    />
+                  </div>
+                ),
+                onOk() {
+                  const improvePrompt = document.getElementById('page-note-suggestion')?.value;
+                  handleGenerateAnnotation(targetPdf.id, improvePrompt || null);
+                },
+                okText: '确认生成',
+                cancelText: '取消'
+              });
+            } else {
+              // 首次生成，直接调用生成函数
+              handleGenerateAnnotation(targetPdf.id, null);
+            }
+          } else {
+            message.warning('请先选择一个PDF文件');
+        }
+        break;
+        
+      case 'generate_full_note':
+          if (targetPdf) {
+            handleGenerateNote(targetPdf.id);
+          } else {
+            message.warning('请先选择一个PDF文件');
+        }
+        break;
+        
+      case 'vision_analyze':
+          if (targetPdf) {
+            setActivePdfId(targetPdf.id); // 设置为活跃PDF
+            
+            // 检查是否存在注释，存在则表示是重新生成
+            const hasAnnotation = targetPdf.pageAnnotations && targetPdf.pageAnnotations[targetPdf.currentPage];
+            
+            if (hasAnnotation) {
+              // 已有注释，显示修改意见框（重新生成）
+              Modal.confirm({
+                title: '使用视觉模型重新生成注释',
+                content: (
+                  <div>
+                    <p>您是否希望提供修改建议？（选填）</p>
+                    <Input.TextArea 
+                      id="improve-suggestion"
+                      placeholder="请输入您的修改建议（可选）"
+                      rows={4}
+                    />
+                  </div>
+                ),
+                onOk() {
+                  const improvePrompt = document.getElementById('improve-suggestion')?.value;
+                  handleForceVisionAnnotate(targetPdf.id, improvePrompt || null);
+                },
+                okText: '确认生成',
+                cancelText: '取消'
+              });
+            } else {
+              // 首次生成，直接调用生成函数
+              handleForceVisionAnnotate(targetPdf.id, null);
+            }
+          } else {
+            message.warning('请先选择一个PDF文件');
+        }
+        break;
+        
+      case 'refresh_pdf':
+          if (targetPdf && targetPdf.serverFilename) {
+            const serverUrl = `/materials/${encodeURIComponent(targetPdf.serverFilename)}`;
+            updatePdfProperty(targetPdf.id, 'fileUrl', serverUrl);
+            message.success('PDF已刷新');
+          } else {
+            message.warning('无法刷新PDF，请确保已选择PDF文件');
+        }
+        break;
+        
+      case 'copy_note':
+        if (data && activePdf) {
+          let content = '';
+          if (data.type === 'annotation') {
+            content = activePdf.pageAnnotations[activePdf.currentPage] || '';
+          } else if (data.type === 'note') {
+            content = activePdf.note || '';
+          } else if (data.type === 'userNote') {
+            content = activePdf.userNote || '';
+          }
+          
+          if (content) {
+            navigator.clipboard.writeText(content)
+              .then(() => message.success('内容已复制到剪贴板'))
+              .catch(() => message.error('复制失败，请手动选择并复制'));
+          }
+        }
+        break;
+        
+      case 'improve_note':
+        if (data && activePdf) {
+          if (data.type === 'annotation') {
+            handleImproveNote(activePdf.id, activePdf.pageAnnotations[activePdf.currentPage], true);
+          } else if (data.type === 'note') {
+            handleImproveNote(activePdf.id, activePdf.note);
+          } else if (data.type === 'userNote') {
+            handleImproveNote(activePdf.id, activePdf.userNote);
+          }
+        }
+        break;
+        
+      case 'copy_to_user_note':
+        if (data && activePdf) {
+          let content = '';
+          if (data.type === 'annotation') {
+            content = activePdf.pageAnnotations[activePdf.currentPage] || '';
+            if (content) {
+              updateUserPageNote(activePdf.id, activePdf.currentPage, content);
+              showPdfWindow(activePdf.id, 'userPageNote');
+              message.success('已复制到页面笔记');
+            }
+          } else if (data.type === 'note') {
+            content = activePdf.note || '';
+            if (content) {
+              updateUserNote(activePdf.id, content);
+              showPdfWindow(activePdf.id, 'userNote');
+              message.success('已复制到我的笔记');
+            }
+          }
+        }
+        break;
+        
+      case 'add_course':
+        // 这里应该调用添加新课程的函数
+        message.info('添加新课程功能即将推出');
+        break;
+        
+      case 'refresh_courses':
+        // 刷新课程列表
+        message.info('刷新课程列表');
+        break;
+        
+      case 'upload_pdf':
+        if (data && data.courseId) {
+          // 选择课程，然后上传PDF
+          setCurrentFile({ key: data.courseId, title: data.courseName });
+          setUploadModalVisible(true);
+        } else {
+          handleUploadToCourse();
+        }
+        break;
+        
+      case 'open_course_note':
+        if (data && data.courseId) {
+          setCurrentFile({ key: data.courseId, title: data.courseName });
+          setShowChapterNoteWindow(true);
+        } else if (currentFile) {
+          setShowChapterNoteWindow(true);
+        }
+        break;
+        
+      case 'delete_course':
+        if (data && data.courseId) {
+          // 这里应该调用删除课程的函数
+          message.warning(`即将删除课程: ${data.courseName}`);
+        }
+        break;
+        
+      case 'open_pdf':
+        if (data && data.pdfId) {
+          handleSelectPdf(data.pdfId);
+        }
+        break;
+        
+      case 'add_pdf_window':
+        if (data && data.pdfId && data.windowType) {
+          showPdfWindow(data.pdfId, data.windowType);
+        }
+        break;
+        
+      case 'delete_pdf':
+        if (data && data.pdfId) {
+          handleDeletePdf(data.pdfId);
+        }
+        break;
+        
+      case 'arrange_windows':
+        // 整理窗口排列
+        // 以网格形式排列所有可见窗口
+        message.info('窗口整理功能即将推出');
+        break;
+        
+      case 'close_all_windows':
+        // 关闭所有窗口
+        if (currentFile) {
+          const pdfs = courseFiles[currentFile.key] || [];
+          pdfs.forEach(pdf => {
+            Object.keys(pdf.windows).forEach(windowName => {
+              if (pdf.windows[windowName].visible) {
+                handleWindowClose(pdf.id, windowName);
+              }
+            });
+          });
+          message.success('已关闭所有窗口');
+        }
+        break;
+        
+      case 'ask_expert_llm':
+        // 打开专家LLM对话框
+        if (data && data.pdfId) {
+          // 使用PDF所属的课程文件作为展板ID
+          if (currentFile && currentFile.key) {
+            setExpertWindowVisible(true);
+            setCurrentExpertBoardId(currentFile.key);
+            setActivePdfId(data.pdfId); // 确保激活正确的PDF
+            message.success(`已打开${data.filename || ''}的专家LLM对话框`);
+          } else {
+            message.warning('未找到课程信息');
+          }
+        } else if (data && data.boardId) {
+          // 显示或创建该展板的专家LLM对话窗口
+          let boardId = data.boardId;
+          
+          // 如果是默认展板且有当前文件，使用当前文件的key
+          if (boardId === 'default-board' && currentFile && currentFile.key) {
+            boardId = currentFile.key;
+          }
+          
+          setExpertWindowVisible(true);
+          setCurrentExpertBoardId(boardId);
+          message.success('已打开专家LLM对话框');
+        } else if (currentFile) {
+          // 如果没有指定boardId但有当前文件，尝试使用当前文件作为展板ID
+          const boardId = currentFile.key;
+          setExpertWindowVisible(true);
+          setCurrentExpertBoardId(boardId);
+          message.success('已打开专家LLM对话框');
+        } else {
+          // 最后的回退方案：使用默认展板ID
+          setExpertWindowVisible(true);
+          setCurrentExpertBoardId('default-board');
+          message.success('已打开专家LLM对话框');
+        }
+        break;
+        
+      case 'open_board_note':
+        // 打开展板笔记
+        if (data && data.boardId) {
+          // 打开该展板的笔记窗口
+          setBoardNoteWindowVisible(true);
+          setCurrentBoardNoteId(data.boardId);
+          message.success('已打开展板笔记');
+        } else if (currentFile) {
+          // 当前课程的展板笔记
+          setShowChapterNoteWindow(true);
+          message.success('已打开课程笔记');
+        } else {
+          message.warning('未找到展板信息');
+        }
+        break;
+        
+      case 'refresh_board':
+        // 刷新展板
+        if (data && data.boardId) {
+          // 刷新指定展板
+          message.success('正在刷新展板');
+          // 这里添加刷新展板的代码
+        } else {
+          message.warning('未找到展板信息');
+        }
+        break;
+        
+      case 'prev_page':
+        if (data && data.pdfId) {
+          const pdfFiles = currentFile ? courseFiles[currentFile.key] || [] : [];
+          const targetPdf = pdfFiles.find(pdf => pdf.id === data.pdfId);
+          if (targetPdf && targetPdf.currentPage > 1) {
+            handlePageChange(targetPdf.currentPage - 1, data.pdfId);
+          }
+        }
+        break;
+        
+      case 'next_page':
+        if (data && data.pdfId) {
+          const pdfFiles = currentFile ? courseFiles[currentFile.key] || [] : [];
+          const targetPdf = pdfFiles.find(pdf => pdf.id === data.pdfId);
+          if (targetPdf && targetPdf.currentPage < targetPdf.totalPages) {
+            handlePageChange(targetPdf.currentPage + 1, data.pdfId);
+          }
+        }
+        break;
+        
+      case 'goto_first_page':
+        if (data && data.pdfId) {
+          handlePageChange(1, data.pdfId);
+        }
+        break;
+        
+      case 'goto_last_page':
+        if (data && data.pdfId) {
+          const pdfFiles = currentFile ? courseFiles[currentFile.key] || [] : [];
+          const targetPdf = pdfFiles.find(pdf => pdf.id === data.pdfId);
+          if (targetPdf && targetPdf.totalPages) {
+            handlePageChange(targetPdf.totalPages, data.pdfId);
+          }
+        }
+        break;
+        
+      default:
+        message.info(`执行命令: ${command}`);
+        break;
+    }
+  };
+
+  // 处理管家LLM查询
+  const handleAssistantQuery = async (query) => {
+    if (!query.trim()) {
+      message.warning('请输入问题');
+      return;
+    }
+    
+    // 显示助手窗口
+    setAssistantWindowVisible(true);
+    setAssistantLoading(true);
+    
+    // 将查询添加到历史记录
+    const newMessage = { role: 'user', content: query };
+    setAssistantHistory(prev => [...prev, newMessage]);
+    
+    try {
+      // 构建操作日志，提供当前状态信息
+      let statusLog = '';
+      
+      // 当前课程信息
+      if (currentFile) {
+        statusLog += `当前课程: ${currentFile.title}\n`;
+      }
+      
+      // 当前PDF信息
+      const activePdf = getActivePdf();
+      if (activePdf) {
+        statusLog += `当前PDF: ${activePdf.clientFilename}\n`;
+        statusLog += `当前页码: ${activePdf.currentPage}/${activePdf.totalPages}\n`;
+        
+        // 打开的窗口信息
+        const openWindows = [];
+        for (const [key, value] of Object.entries(activePdf.windows)) {
+          if (value.visible) {
+            openWindows.push(getWindowTypeName(key));
+          }
+        }
+        
+        if (openWindows.length > 0) {
+          statusLog += `打开的窗口: ${openWindows.join(', ')}\n`;
+        }
+      }
+      
+      // 获取可见PDF列表
+      const visiblePdfs = getVisiblePdfs();
+      if (visiblePdfs.length > 0) {
+        statusLog += `打开的PDF文件: ${visiblePdfs.map(pdf => pdf.clientFilename).join(', ')}\n`;
+      }
+      
+      console.log('发送管家LLM查询:', query);
+      console.log('状态日志:', statusLog);
+      
+      // 调用API
+      const res = await fetch('/api/assistant', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query,
+          status_log: statusLog,
+          history: assistantHistory.slice(-10) // 只保留最近10条对话历史
+        }),
+      });
+      
+      if (!res.ok) {
+        throw new Error(`服务器返回错误: ${res.status}`);
+      }
+      
+      const data = await res.json();
+      const response = data.response;
+      const command = data.command;
+      
+      // 更新响应
+      setAssistantResponse(response);
+      
+      // 将响应添加到历史记录
+      setAssistantHistory(prev => [
+        ...prev, 
+        { role: 'assistant', content: response }
+      ]);
+      
+      // 检查是否有待执行的命令
+      if (command) {
+        setPendingCommand(command);
+        // 显示确认对话框
+        Modal.confirm({
+          title: '确认执行指令',
+          content: (
+            <div>
+              <p>管家LLM建议执行以下指令:</p>
+              <pre style={{ background: '#f5f5f5', padding: '10px', borderRadius: '4px' }}>
+                {command.type}: {command.action}
+              </pre>
+              <p>是否确认执行?</p>
+            </div>
+          ),
+          onOk: () => executeCommand(command),
+          onCancel: () => {
+            message.info('已取消执行');
+            setPendingCommand(null);
+          },
+          okText: '执行',
+          cancelText: '取消'
+        });
+      }
+    } catch (err) {
+      console.error('管家LLM查询失败:', err);
+      setAssistantResponse(`查询失败: ${err.message}`);
+      
+      // 将错误添加到历史记录
+      setAssistantHistory(prev => [
+        ...prev, 
+        { role: 'system', content: `错误: ${err.message}` }
+      ]);
+    } finally {
+      setAssistantLoading(false);
+      setAssistantQuery(''); // 清空输入框
+    }
+  };
+  
+  // 执行管家LLM命令（返回Promise以支持命令执行状态跟踪）
+  const executeCommand = (command) => {
+      console.log('执行命令:', command);
+      
+    return new Promise(async (resolve, reject) => {
+      try {
+        // 根据命令类型分别处理
+      switch (command.type) {
+          case 'file_operation':
+            // 处理文件操作命令
+            if (command.action === 'create_course_folder' && command.params?.folder_name) {
+              // 添加创建课程文件夹的逻辑
+              const folderName = command.params.folder_name;
+              try {
+                message.loading({ content: `创建课程文件夹"${folderName}"中...`, key: 'createFolder' });
+                const response = await fetch('/api/courses', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ name: folderName })
+                });
+                
+                if (!response.ok) {
+                  const errorData = await response.json().catch(() => ({}));
+                  throw new Error(errorData.detail || `创建课程文件夹失败 (HTTP ${response.status})`);
+                }
+                
+                const data = await response.json();
+                message.success({ content: `已创建课程文件夹"${folderName}"`, key: 'createFolder' });
+                
+                // 手动触发刷新事件
+                const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+                window.dispatchEvent(refreshEvent);
+                
+                // 确保状态更新，延迟后再次触发刷新
+                setTimeout(() => {
+                  const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+                  window.dispatchEvent(refreshEvent);
+                  
+                  // 如果课程列表有DOM节点，直接点击刷新按钮
+                  const refreshButton = document.querySelector('.course-explorer .explorer-actions button[aria-label="reload"]');
+                  if (refreshButton) {
+                    console.log('点击课程列表刷新按钮');
+                    refreshButton.click();
+                  }
+                }, 1500);
+                
+                resolve({ success: true, message: `已创建课程文件夹"${folderName}"`, data });
+              } catch (err) {
+                message.error({ content: `创建课程文件夹失败: ${err.message}`, key: 'createFolder' });
+                
+                // 如果是连接错误，提供更明确的提示
+                if (err.message.includes('Failed to fetch')) {
+                  message.warning('后端服务连接失败，请确保后端服务已启动');
+                }
+                
+                reject(err);
+              }
+            } else {
+              message.warning(`未知文件操作命令: ${command.action}`);
+              reject(new Error(`未知文件操作命令: ${command.action}`));
+          }
+          break;
+          
+          case 'board_operation':
+            // 处理展板操作命令
+            if (command.action === 'create_board' && command.params?.board_name && command.params?.course_folder) {
+              // 添加创建展板的逻辑
+              const boardName = command.params.board_name;
+              const courseFolder = command.params.course_folder;
+              try {
+                message.loading({ content: `在"${courseFolder}"中创建展板"${boardName}"中...`, key: 'createBoard' });
+                const response = await fetch('/api/boards', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ 
+                    name: boardName,
+                    course_folder: courseFolder 
+                  })
+                });
+                
+                if (!response.ok) {
+                  const errorData = await response.json().catch(() => ({}));
+                  throw new Error(errorData.detail || `创建展板失败 (HTTP ${response.status})`);
+                }
+                
+                const data = await response.json();
+                message.success({ content: `已在"${courseFolder}"中创建展板"${boardName}"`, key: 'createBoard' });
+                
+                // 手动触发刷新事件
+                const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+                window.dispatchEvent(refreshEvent);
+                
+                // 延迟后再次触发刷新
+                setTimeout(() => {
+                  const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+                  window.dispatchEvent(refreshEvent);
+                  
+                  // 如果课程列表有DOM节点，直接点击刷新按钮
+                  const refreshButton = document.querySelector('.course-explorer .explorer-actions button[aria-label="reload"]');
+                  if (refreshButton) {
+                    refreshButton.click();
+                  }
+                }, 1500);
+                
+                resolve({ success: true, message: `已在"${courseFolder}"中创建展板"${boardName}"`, data });
+              } catch (err) {
+                message.error({ content: `创建展板失败: ${err.message}`, key: 'createBoard' });
+                
+                // 如果是连接错误，提供更明确的提示
+                if (err.message.includes('Failed to fetch')) {
+                  message.warning('后端服务连接失败，请确保后端服务已启动');
+                }
+                
+                reject(err);
+              }
+            } else {
+              message.warning(`未知展板操作命令: ${command.action}`);
+              reject(new Error(`未知展板操作命令: ${command.action}`));
+          }
+          break;
+          
+        default:
+            message.warning(`未知命令类型: ${command.type}`);
+            reject(new Error(`未知命令类型: ${command.type}`));
+            break;
+        }
+      } catch (error) {
+        console.error('命令执行过程中出现全局错误:', error);
+        message.error(`命令执行失败: ${error.message}`);
+        reject(error);
+      }
+    });
+  };
+
+  // 更新右键菜单处理函数，支持自定义菜单项
+  const handleContextMenu = (area, items, position, data) => {
+    console.log('应用调用handleContextMenu:', area, position, data);
+    // 使用全局暴露的showContextMenu方法显示菜单
+    if (window.showContextMenu) {
+      try {
+      window.showContextMenu(area, items, position, data);
+      } catch (error) {
+        console.error('显示右键菜单失败:', error);
+      }
+    } else {
+      console.warn('未找到全局右键菜单方法');
+    }
+  };
+
+  // 渲染调试面板
+  const renderDebugPanel = () => {
+    if (!debugPanelVisible) return null;
+
+  return (
+      <DraggableWindow
+        title="LLM交互调试面板"
+        position={debugPanelPosition}
+        onPositionChange={setDebugPanelPosition}
+        size={debugPanelSize}
+        onSizeChange={setDebugPanelSize}
+        onClose={() => setDebugPanelVisible(false)}
+        zIndex={1000}  // 确保在最上层
+        resizable
+      >
+        <LLMDebugPanel />
+      </DraggableWindow>
+    );
+  };
+
+  // 刷新课程和文件列表
+  const refreshCourses = async () => {
+    try {
+      console.log('🔄 刷新课程和文件列表');
+      const response = await fetch('/api/app-state');
+      if (!response.ok) {
+        throw new Error(`获取课程列表失败 (HTTP ${response.status})`);
+      }
+      
+      const data = await response.json();
+      setCourseData(data.course_folders || []);
+      console.log('✅ 课程数据刷新成功');
+    } catch (error) {
+      console.error('❌ 刷新课程数据失败:', error);
+      message.error(`刷新课程数据失败: ${error.message}`);
+    }
+  };
+
+  // 测试并发注释生成功能
+  const handleConcurrentAnnotationTest = async () => {
+    if (!currentFile) {
+      message.warning('请先选择一个课程文件');
+      return;
+    }
+
+    const boardId = currentExpertBoardId || currentFile.key;
+    if (!boardId) {
+      message.warning('无法确定展板ID');
+      return;
+    }
+
+    console.log(`🎯 并发测试 - 当前展板ID: ${boardId}`);
+    console.log(`🎯 并发测试 - currentExpertBoardId: ${currentExpertBoardId}`);
+    console.log(`🎯 并发测试 - currentFile.key: ${currentFile?.key}`);
+
+    const pdfs = courseFiles[currentFile.key] || [];
+    const visiblePdfs = pdfs.filter(pdf => pdf.windows.pdf.visible);
+
+    if (visiblePdfs.length === 0) {
+      message.warning('没有可见的PDF窗口来测试并发功能');
+      return;
+    }
+
+    try {
+      message.info(`🚀 开始测试并发注释生成 - ${visiblePdfs.length}个PDF同时处理`);
+
+      // 获取API基础URL
+      const getApiBaseUrl = () => {
+        if (process.env.REACT_APP_BACKEND_URL) {
+          return process.env.REACT_APP_BACKEND_URL;
+        }
+        return window.location.protocol + '//' + window.location.hostname + ':8000';
+      };
+
+      const baseUrl = getApiBaseUrl();
+
+      // 为每个可见的PDF提交动态任务
+      const taskPromises = visiblePdfs.map(async (pdf, index) => {
+        const filename = pdf.filename || pdf.clientFilename;
+        const pageNum = pdf.currentPage || 1;
+        
+        // 提交动态任务
+        const response = await fetch(`${baseUrl}/api/expert/dynamic/submit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            board_id: boardId,
+            task_info: {
+              type: 'answer_question',
+              params: {
+                question: `请为 ${filename} 第${pageNum}页生成简明扼要的笔记（任务${index + 1}）`,
+                context: `这是并发测试任务 ${index + 1}/${visiblePdfs.length}`
+              }
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`任务${index + 1}提交失败: ${response.status} ${response.statusText} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ 任务${index + 1}已提交: ${data.task_id}`);
+        
+        return {
+          taskId: data.task_id,
+          pdfId: pdf.id,
+          filename: filename,
+          pageNum: pageNum,
+          index: index + 1
+        };
+      });
+
+      const submittedTasks = await Promise.all(taskPromises);
+      
+      message.success(`🎉 成功提交${submittedTasks.length}个并发任务！请查看右下角的任务状态指示器`);
+      
+      // 可选：自动监控任务完成状态
+      setTimeout(() => {
+        message.info('💡 提示：点击右下角的任务指示器可以查看详细的执行状态');
+      }, 2000);
+
+    } catch (error) {
+      console.error('并发测试失败:', error);
+      message.error(`并发测试失败: ${error.message}`);
+    }
+  };
+
+  // 清理多余的PDF展板文件
+  const handleCleanupDuplicatePdfFiles = async () => {
+    try {
+      console.log('🔄 开始清理多余的PDF展板文件');
+      message.loading({ content: '正在清理多余的PDF展板文件...', key: 'cleanup' });
+
+      // 使用API客户端方法
+      const data = await api.cleanupDuplicatePdfFiles();
+      
+      console.log('✅ 清理完成:', data);
+      
+      if (data.cleaned_count > 0) {
+        message.success({ 
+          content: `清理完成！删除了 ${data.cleaned_count} 个多余的PDF展板文件`, 
+          key: 'cleanup' 
+        });
+        
+        // 刷新课程列表以更新UI
+        setTimeout(() => {
+          const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+          window.dispatchEvent(refreshEvent);
+        }, 1000);
+      } else {
+        message.info({ 
+          content: '没有发现需要清理的多余PDF展板文件', 
+          key: 'cleanup' 
+        });
+      }
+
+    } catch (error) {
+      console.error('❌ 清理失败:', error);
+      message.error({ 
+        content: `清理失败: ${error.message}`, 
+        key: 'cleanup' 
+      });
+    }
+  };
+
+  // 更新PDF颜色
+  const updatePdfColor = (pdfId, color) => {
+    if (!currentFile) return;
+    
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        filePdfs[pdfIndex] = {
+          ...filePdfs[pdfIndex],
+          customColor: color
+        };
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      }
+      
+      return prev;
+    });
+  };
+
+  // 获取PDF的当前颜色
+  const getPdfCurrentColor = (pdfId) => {
+    if (!currentFile) return null;
+    
+    const pdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
+    return pdf?.customColor || getPdfColor(pdfId);
+  };
+
+  // 窗口前置（移到最上层但在各自的范围内）- 专门处理PDF窗口
+  const handleBringWindowToFront = (pdfId, windowName) => {
+    console.log('🔼 PDF窗口前置:', { pdfId, windowName });
+    
+    // 检查窗口是否已经被置顶
+    const isPinned = pinnedWindows.some(w => w.pdfId === pdfId && w.windowName === windowName);
+    const { normalBase, pinnedBase } = getBaseZIndices();
+    
+    console.log('🔍 PDF窗口状态:', { isPinned, normalBase, pinnedBase });
+    
+    setCourseFiles(prev => {
+      // 🔧 关键修复：获取全局所有课程的PDF窗口，而不仅仅是当前课程的
+      const allGlobalWindows = [];
+      let targetCourseKey = null;
+      let targetPdfIndex = -1;
+      let targetPdf = null;
+      
+      // 遍历所有课程文件，找到目标PDF并收集所有窗口信息
+      for (const [courseKey, pdfs] of Object.entries(prev)) {
+        const pdfArray = Array.isArray(pdfs) ? pdfs : [];
+        
+        pdfArray.forEach((pdf, index) => {
+          // 检查是否是目标PDF
+          if (pdf.id === pdfId) {
+            targetCourseKey = courseKey;
+            targetPdfIndex = index;
+            targetPdf = pdf;
+          }
+          
+          // 收集所有可见窗口的信息
+          Object.entries(pdf.windows).forEach(([wName, wData]) => {
+            if (wData.visible) {
+              allGlobalWindows.push({
+                pdfId: pdf.id,
+                windowName: wName,
+                courseKey: courseKey,
+                isPinned: pinnedWindows.some(w => w.pdfId === pdf.id && w.windowName === wName),
+                zIndex: wData.zIndex,
+                visible: wData.visible
+              });
+            }
+          });
+        });
+      }
+      
+      // 检查是否找到目标PDF
+      if (!targetCourseKey || targetPdfIndex === -1 || !targetPdf) {
+        console.warn('⚠️ 未找到目标PDF窗口:', { pdfId, windowName });
+        return prev;
+      }
+      
+      const currentWindow = targetPdf.windows[windowName];
+      if (!currentWindow) {
+        console.warn('⚠️ 未找到PDF窗口:', windowName);
+        return prev;
+      }
+      
+      console.log('📋 当前PDF窗口z-index:', currentWindow.zIndex);
+      console.log('🌍 全局窗口数量:', allGlobalWindows.length);
+
+      // 分离置顶和非置顶窗口的z-index
+      const pinnedZIndices = allGlobalWindows
+        .filter(w => w.isPinned)
+        .map(w => w.zIndex)
+        .filter(z => typeof z === 'number'); // 确保是数字
+      
+      const normalZIndices = allGlobalWindows
+        .filter(w => !w.isPinned)
+        .map(w => w.zIndex)
+        .filter(z => typeof z === 'number'); // 确保是数字
+
+      console.log('📊 全局PDF窗口Z-index分布:', { 
+        pinnedZIndices: pinnedZIndices.sort((a, b) => a - b), 
+        normalZIndices: normalZIndices.sort((a, b) => a - b),
+        totalWindows: allGlobalWindows.length,
+        currentWindowZIndex: currentWindow.zIndex,
+        targetWindow: `${pdfId}:${windowName}`,
+        allWindowsDetail: allGlobalWindows.map(w => ({
+          window: `${w.pdfId}:${w.windowName}`,
+          zIndex: w.zIndex,
+          isPinned: w.isPinned,
+          courseKey: w.courseKey
+        }))
+      });
+
+      // 计算新的zIndex
+      let newZIndex;
+      if (isPinned) {
+        // 如果是置顶窗口，使其成为全局置顶窗口中最高的
+        newZIndex = pinnedZIndices.length > 0 
+          ? Math.max(...pinnedZIndices) + 1 
+          : pinnedBase;
+          
+        console.log('📌 置顶PDF窗口新z-index:', newZIndex);
+      } else {
+        // 🔧 修复：确保普通窗口能正确前置
+        if (normalZIndices.length > 0) {
+          const maxNormalZIndex = Math.max(...normalZIndices);
+          console.log('📊 当前最高普通窗口z-index:', maxNormalZIndex);
+          
+          // 🔧 关键修复：即使当前窗口已经是最高的，也要强制增加1来确保前置
+          // 除非已经达到置顶窗口范围的边界
+          if (maxNormalZIndex >= pinnedBase - 1) {
+            // 如果已经接近置顶窗口范围，重新分配所有普通窗口的z-index
+            console.log('⚠️ 普通窗口z-index接近置顶范围，重新分配');
+            newZIndex = normalBase + normalZIndices.length;
+          } else {
+            // 正常情况：在最高z-index基础上+1
+            newZIndex = maxNormalZIndex + 1;
+          }
+        } else {
+          newZIndex = normalBase;
+        }
+        
+        // 确保不超过置顶窗口的范围
+        if (newZIndex >= pinnedBase) {
+          newZIndex = pinnedBase - 1;
+        }
+        
+        console.log('🔢 普通PDF窗口新z-index:', newZIndex, '(当前:', currentWindow.zIndex, ')');
+      }
+      
+      // 🔧 修复：移除"无需更新"的过早判断，确保窗口能够前置
+      // 注释掉这个判断，让窗口总是更新到最新的z-index
+      // if (currentWindow.zIndex === newZIndex) {
+      //   console.log('✅ PDF窗口已经在前端，无需更新');
+      //   return prev;
+      // }
+      
+      // 🔧 新增：只有当新z-index确实比当前z-index小或相等时才跳过更新
+      if (newZIndex <= currentWindow.zIndex && currentWindow.zIndex !== 999) {
+        console.log('⏭️ PDF窗口z-index无需增加:', newZIndex, '<=', currentWindow.zIndex);
+        return prev;
+      }
+      
+      // 更新目标PDF窗口的z-index
+      const updatedPdfs = [...(prev[targetCourseKey] || [])];
+      const updatedWindows = {
+        ...updatedPdfs[targetPdfIndex].windows,
+        [windowName]: {
+          ...updatedPdfs[targetPdfIndex].windows[windowName],
+          zIndex: newZIndex
+        }
+      };
+      
+      updatedPdfs[targetPdfIndex] = {
+        ...updatedPdfs[targetPdfIndex],
+        windows: updatedWindows
+      };
+      
+      console.log(`✅ PDF窗口 ${pdfId}:${windowName} z-index更新: ${currentWindow.zIndex} → ${newZIndex}`);
+      
+      return {
+        ...prev,
+        [targetCourseKey]: updatedPdfs
+      };
+    });
+  };
+
+  // 处理专家LLM查询
+  const handleExpertQuery = async (query, streamMode = false) => {
+    if (!query.trim()) return;
+
+    // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后使用为课程文件生成的展板ID
+    let boardId = currentExpertBoardId || getBoardIdForCourseFile(currentFile?.key);
+
+    // 如果没有currentExpertBoardId，设置它为课程文件对应的展板ID确保一致性
+    if (!currentExpertBoardId && currentFile?.key) {
+      const mappedBoardId = getBoardIdForCourseFile(currentFile.key);
+      setCurrentExpertBoardId(mappedBoardId);
+      boardId = mappedBoardId;
+    }
+
+    // ... existing code ...
+  };
+
+  // 快捷键相关处理函数
+  const handleToggleWindow = (pdfId, windowName) => {
+    if (!pdfId || !currentFile) return;
+    
+    const pdfs = courseFiles[currentFile.key] || [];
+    const pdf = pdfs.find(p => p.id === pdfId);
+    if (!pdf) return;
+    
+    const currentVisible = pdf.windows[windowName]?.visible || false;
+    handleWindowChange(pdfId, windowName, { visible: !currentVisible });
+    
+    // 如果是打开窗口，将其置于前端
+    if (!currentVisible) {
+      handleBringWindowToFront(pdfId, windowName);
+    }
+    
+    message.success(`${getWindowTitle(pdf, windowName)} ${!currentVisible ? '已打开' : '已关闭'}`);
+  };
+
+  const handleSwitchPdf = (pdfId) => {
+    setActivePdfId(pdfId);
+    // 将新激活的PDF窗口置于前端
+    handleBringWindowToFront(pdfId, 'pdf');
+    message.success('已切换到PDF');
+  };
+
+  const handleNewPdf = () => {
+    if (!currentFile) {
+      message.warning('请先选择一个课程文件');
+      return;
+    }
+    setUploadModalVisible(true);
+  };
+
+  const handleClosePdf = (pdfId) => {
+    handleDeletePdf(pdfId);
+  };
+
+  const handleTogglePin = (pdfId) => {
+    const pdf = getActivePdf();
+    if (!pdf) return;
+    
+    // 找到当前激活的窗口
+    let activeWindow = null;
+    for (const [windowName, windowData] of Object.entries(pdf.windows)) {
+      if (windowData.visible) {
+        activeWindow = windowName;
+        break;
+      }
+    }
+    
+    if (activeWindow) {
+      handleToggleWindowPin(`${pdfId}:${activeWindow}`);
+    }
+  };
+
+  const handleFocusSearch = () => {
+    // 聚焦到搜索框（如果有的话）
+    const searchInput = document.querySelector('.course-search input');
+    if (searchInput) {
+      searchInput.focus();
+      message.success('已聚焦到搜索框');
+    }
+  };
+
+  const handleToggleExpert = () => {
+    if (!currentFile) {
+      message.warning('请先选择一个课程文件');
+      return;
+    }
+    
+    if (!expertWindowVisible) {
+      const boardId = getBoardIdForCourseFile(currentFile.key);
+      setCurrentExpertBoardId(boardId);
+    }
+    setExpertWindowVisible(!expertWindowVisible);
+  };
+
+  const handleToggleButler = () => {
+    setAssistantWindowVisible(!assistantWindowVisible);
+  };
+
+  const handleSaveNote = async (pdfId) => {
+    const pdf = getActivePdf();
+    if (!pdf) return;
+    
+    try {
+      // 保存笔记到服务器
+      await api.saveNote(pdfId, {
+        note: pdf.note,
+        userNote: pdf.userNote,
+        pageAnnotations: pdf.pageAnnotations,
+        userPageNotes: pdf.userPageNotes
+      });
+      message.success('笔记已保存');
+    } catch (error) {
+      message.error('保存笔记失败');
+      console.error('保存笔记错误:', error);
+    }
+  };
+
+  const handleExportPdf = async (pdfId) => {
+    const pdf = getActivePdf();
+    if (!pdf) return;
+    
+    try {
+      // 准备导出数据
+      const exportData = {
+        filename: pdf.clientFilename || pdf.filename,
+        note: pdf.note,
+        userNote: pdf.userNote,
+        pageAnnotations: pdf.pageAnnotations,
+        userPageNotes: pdf.userPageNotes,
+        exportTime: new Date().toISOString()
+      };
+      
+      // 创建并下载JSON文件
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${pdf.clientFilename || 'notes'}_笔记导出.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      message.success('笔记已导出');
+    } catch (error) {
+      message.error('导出笔记失败');
+      console.error('导出笔记错误:', error);
+    }
+  };
+
+  const handleToggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  const handleImproveAnnotationShortcut = (pdfId, improvePrompt) => {
+    const pdf = getActivePdf();
+    if (!pdf) return;
+    
+    const currentAnnotation = pdf.pageAnnotations[pdf.currentPage];
+    if (currentAnnotation) {
+      handleImproveAnnotation(pdfId, pdf.currentPage, currentAnnotation, improvePrompt);
+    }
+  };
+
+  const handleSaveAsNewVersion = async (pdfId) => {
+    const pdf = getActivePdf();
+    if (!pdf) return;
+    
+    try {
+      // 创建新版本的笔记
+      const versionName = prompt('请输入版本名称：', `版本_${new Date().toLocaleString()}`);
+      if (!versionName) return;
+      
+      const versionData = {
+        versionName,
+        filename: pdf.clientFilename || pdf.filename,
+        note: pdf.note,
+        userNote: pdf.userNote,
+        pageAnnotations: pdf.pageAnnotations,
+        userPageNotes: pdf.userPageNotes,
+        createTime: new Date().toISOString()
+      };
+      
+      // 保存到本地存储
+      const versions = JSON.parse(localStorage.getItem(`pdf_versions_${pdfId}`) || '[]');
+      versions.push(versionData);
+      localStorage.setItem(`pdf_versions_${pdfId}`, JSON.stringify(versions));
+      
+      message.success(`已保存为新版本: ${versionName}`);
+    } catch (error) {
+      message.error('保存版本失败');
+      console.error('保存版本错误:', error);
+    }
+  };
+
+  return (
+    <Layout style={{ height: "100vh" }}>
+      {/* 键盘快捷键处理组件 */}
+      <KeyboardShortcuts
+        activePdfId={activePdfId}
+        currentFile={currentFile}
+        courseFiles={courseFiles}
+        onPageChange={handlePageChange}
+        onToggleWindow={handleToggleWindow}
+        onGenerateNote={handleGenerateNote}
+        onGenerateAnnotation={handleGenerateAnnotation}
+        onSwitchPdf={handleSwitchPdf}
+        onNewPdf={handleNewPdf}
+        onClosePdf={handleClosePdf}
+        onTogglePin={handleTogglePin}
+        onFocusSearch={handleFocusSearch}
+        onToggleExpert={handleToggleExpert}
+        onToggleButler={handleToggleButler}
+        onSaveNote={handleSaveNote}
+        onExportPdf={handleExportPdf}
+        onToggleFullscreen={handleToggleFullscreen}
+        onImproveAnnotation={handleImproveAnnotationShortcut}
+        onSaveAsNewVersion={handleSaveAsNewVersion}
+        getActivePdf={getActivePdf}
+        getVisiblePdfs={getVisiblePdfs}
+      />
+      
+      <Header className="app-header">
+        <div className="logo">WhatNote - 智能笔记系统</div>
+        <div className="header-buttons">
+          <Tooltip title="快捷键帮助 (Ctrl+/)">
+            <Button
+              icon={<QuestionCircleOutlined />}
+              onClick={() => {
+                // 触发快捷键帮助
+                const event = new KeyboardEvent('keydown', {
+                  key: '/',
+                  ctrlKey: true,
+                  bubbles: true
+                });
+                window.dispatchEvent(event);
+              }}
+              size="small"
+              style={{ marginRight: 8 }}
+            >
+              快捷键
+            </Button>
+          </Tooltip>
+          <Tooltip title="测试并发处理">
+            <Button
+              icon={<ArrowsAltOutlined />}
+              onClick={handleConcurrentAnnotationTest}
+              size="small"
+              style={{ marginRight: 8 }}
+            >
+              测试并发
+            </Button>
+          </Tooltip>
+          <Tooltip title="清理多余PDF展板文件">
+            <Button
+              icon={<DeleteOutlined />}
+              onClick={handleCleanupDuplicatePdfFiles}
+              size="small"
+              style={{ marginRight: 8 }}
+              type="default"
+            >
+              清理重复
+            </Button>
+          </Tooltip>
+          <Tooltip title="打开管家助手 (Ctrl+B)">
+            <Button
+              icon={<RobotOutlined />}
+              onClick={() => setAssistantWindowVisible(!assistantWindowVisible)}
+              type={assistantWindowVisible ? "primary" : "default"}
+              shape="round"
+              size="small"
+              style={{ marginRight: 8 }}
+            >
+              管家助手
+            </Button>
+          </Tooltip>
+          <Tooltip title="调试面板">
+            <Button
+              icon={<BugOutlined />}
+              onClick={() => setDebugPanelVisible(!debugPanelVisible)}
+              type={debugPanelVisible ? "primary" : "default"}
+              danger={debugPanelVisible}
+              shape="round"
+              size="small"
+            >
+              调试面板
+            </Button>
+          </Tooltip>
+        </div>
+      </Header>
+      
+      <Layout>
+        {/* 侧边栏 */}
+        <div
+          style={{
+            width: siderWidth,
+            height: '100%',
+            position: 'relative',
+            display: 'flex'
+          }}
+        >
+          <Sider
+            width={siderWidth}
+            theme="light"
+            style={{
+              height: '100%',
+              position: 'relative',
+              boxShadow: '0 0 10px rgba(0, 0, 0, 0.1)',
+              zIndex: 2,
+              overflowY: 'auto',
+              flex: 1
+            }}
+          >
+            <CourseExplorer 
+              onSelectFile={handleSelectFile}
+              onUploadFile={handleUploadToCourse}
+              activeCourseFile={currentFile}
+              currentFile={currentFile}
+              courseFiles={courseFiles}
+              setCourseFiles={setCourseFiles}
+              pdfFiles={courseFiles}
+              onSelectPdf={handleSelectPdf}
+              onDeletePdf={handleDeletePdf}
+            />
+          </Sider>
+          
+          {/* 拖拽分隔条 */}
+          <div
+            className="sider-resize-handle"
+            onMouseDown={handleSiderResizeStart}
+            style={{
+              width: '12px',
+              height: '100%',
+              cursor: 'col-resize',
+              backgroundColor: '#f0f0f0',
+              borderLeft: '1px solid #d9d9d9',
+              borderRight: '1px solid #d9d9d9',
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 3,
+              transition: 'background-color 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.target.style.backgroundColor = '#e6f7ff';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.backgroundColor = '#f0f0f0';
+            }}
+          >
+            {/* 拖拽图标 */}
+            <div style={{
+              width: '4px',
+              height: '40px',
+              background: 'linear-gradient(to bottom, #d9d9d9 0%, #d9d9d9 20%, transparent 20%, transparent 40%, #d9d9d9 40%, #d9d9d9 60%, transparent 60%, transparent 80%, #d9d9d9 80%, #d9d9d9 100%)',
+              borderRadius: '2px',
+              opacity: 0.6
+            }} />
+          </div>
+        </div>
+
+        {/* 主内容区域 */}
+        <Content 
+          style={{ position: 'relative', overflow: 'hidden' }}
+          className="board-area"
+          data-board-id={currentFile ? currentFile.key : null}
+          data-board-name={currentFile ? currentFile.title : 'Default Board'}
+        >
+          {/* 渲染可见的PDF视窗 */}
+          {currentFile && Object.values(courseFiles[currentFile.key] || {}).map(pdf => (
+            <React.Fragment key={pdf.id}>
+              {pdf.windows.pdf.visible && renderPdfWindow(pdf, 'pdf')}
+              {pdf.windows.note.visible && renderPdfWindow(pdf, 'note')}
+              {pdf.windows.annotation.visible && renderPdfWindow(pdf, 'annotation')}
+              {pdf.windows.answer?.visible && renderPdfWindow(pdf, 'answer')}
+              {pdf.windows.userNote.visible && renderPdfWindow(pdf, 'userNote')}
+              {pdf.windows.userPageNote.visible && renderPdfWindow(pdf, 'userPageNote')}
+            </React.Fragment>
+          ))}
+
+          {/* 章节笔记窗口 */}
+          {showChapterNoteWindow && currentFile && (
+            <DraggableWindow
+              key={`chapterNote-${currentFile.key}`}
+              title={`章节笔记: ${currentFile.title || ''}`}
+              defaultPosition={chapterNoteWindowPosition}
+              defaultSize={chapterNoteWindowSize}
+              onClose={() => setShowChapterNoteWindow(false)}
+              onDragStop={(e, data) => setChapterNoteWindowPosition(data)}
+              onResize={(e, dir, ref, delta, pos) => {
+                const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+                setChapterNoteWindowSize(newSize);
+              }}
+              zIndex={500}  // 章节笔记窗口固定z-index
+              windowId={`chapter:${currentFile.key}`}
+              windowType="chapterNote"
+              onBringToFront={() => handleBringNonPdfWindowToFront(`chapter:${currentFile.key}`, 'chapterNote')}
+              isPinned={pinnedWindows.some(w => w.pdfId === 'chapter' && w.windowName === currentFile.key)}
+              onTogglePin={() => handleToggleWindowPin(`chapter:${currentFile.key}`)}
+              onContextMenu={() => generateChapterContextMenu()}
+              titleBarColor="#666"  // 章节笔记也使用灰色标题栏
+              resizable
+            >
+              <UserNoteEditor
+                content={chapterNotes[currentFile.key] || ''}
+                onChange={(content) => updateChapterNote(currentFile.key, content)}
+                onImprove={(content, improvePrompt) => handleImproveChapterNote(content, improvePrompt)}
+                placeholder="在这里记录关于整个章节的笔记..."
+                isLoading={chapterNoteLoading}
+              />
+            </DraggableWindow>
+          )}
+
+          {/* 专家LLM对话窗口 */}
+          {expertWindowVisible && currentExpertBoardId && (
+            <DraggableWindow
+              key={`expertLLM-${currentExpertBoardId}`}
+              title={`专家LLM: ${currentExpertBoardId}`}
+              defaultPosition={expertWindowPosition}
+              defaultSize={expertWindowSize}
+              onClose={() => setExpertWindowVisible(false)}
+              onDragStop={(e, data) => setExpertWindowPosition(data)}
+              onResize={(e, dir, ref, delta, pos) => {
+                const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+                setExpertWindowSize(newSize);
+              }}
+              zIndex={501}  // 专家LLM窗口固定z-index
+              windowId={`expert:${currentExpertBoardId}`}
+              windowType="expertLLM"
+              onBringToFront={() => handleBringNonPdfWindowToFront(`expert:${currentExpertBoardId}`, 'expertLLM')}
+              isPinned={pinnedWindows.some(w => w.pdfId === 'expert' && w.windowName === currentExpertBoardId)}
+              onTogglePin={() => handleToggleWindowPin(`expert:${currentExpertBoardId}`)}
+              titleBarColor="#666"  // 专家LLM使用灰色标题栏
+              resizable
+            >
+              <BoardExpertPanel
+                boardId={currentExpertBoardId}
+                initialHistory={expertHistory[currentExpertBoardId] || []}
+                onHistoryChange={(history) => {
+                  setExpertHistory(prev => ({
+                    ...prev,
+                    [currentExpertBoardId]: history
+                  }));
+                }}
+              />
+            </DraggableWindow>
+          )}
+
+          {/* 管家LLM窗口 */}
+          {assistantWindowVisible && (
+            <DraggableWindow
+              key="butler-assistant"
+              title="管家LLM助手"
+              defaultPosition={assistantWindowPosition}
+              defaultSize={assistantWindowSize}
+              onClose={() => setAssistantWindowVisible(false)}
+              onDragStop={(e, data) => setAssistantWindowPosition(data)}
+              onResize={(e, dir, ref, delta, pos) => {
+                const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+                setAssistantWindowSize(newSize);
+              }}
+              zIndex={502}  // 管家LLM窗口固定z-index
+              windowId="butler:assistant"
+              windowType="butlerLLM"
+              onBringToFront={() => handleBringNonPdfWindowToFront('butler:assistant', 'butlerLLM')}
+              isPinned={pinnedWindows.some(w => w.pdfId === 'butler' && w.windowName === 'assistant')}
+              onTogglePin={() => handleToggleWindowPin('butler:assistant')}
+              titleBarColor="#666"  // 管家LLM也使用灰色标题栏
+              resizable
+            >
+              <ButlerPanel
+                onAction={executeCommand}
+              />
+            </DraggableWindow>
+          )}
+
+          {/* 上传PDF的Modal */}
+      <Modal 
+            title="上传PDF文件"
+        open={uploadModalVisible}
+        onCancel={() => setUploadModalVisible(false)}
+        footer={null}
+          >
+            <Upload.Dragger
+              name="file"
+          accept=".pdf"
+              multiple={false}
+          showUploadList={false}
+              beforeUpload={handleFileChange}
+              customRequest={({ file, onSuccess }) => {
+                onSuccess();
+              }}
+            >
+              <p className="ant-upload-drag-icon">
+                <UploadOutlined />
+              </p>
+              <p className="ant-upload-text">点击或拖拽文件到此区域上传</p>
+              <p className="ant-upload-hint">仅支持PDF文件</p>
+            </Upload.Dragger>
+      </Modal>
+      
+          {/* PDF选择列表Modal */}
+      <Modal
+            title={`选择 ${currentFile?.title || ''} 的PDF文件`}
+        open={pdfListModalVisible}
+        onCancel={() => setPdfListModalVisible(false)}
+        footer={null}
+            width={600}
+      >
+        <List
+              itemLayout="horizontal"
+          dataSource={currentFile ? (courseFiles[currentFile.key] || []) : []}
+          renderItem={pdf => (
+            <List.Item
+              actions={[
+                    <Button
+                      key="select"
+                      type="primary"
+                      onClick={() => handleSelectPdf(pdf.id)}
+                    >
+                      选择
+                    </Button>,
+                <Button 
+                      key="delete"
+                  danger 
+                  onClick={() => handleDeletePdf(pdf.id)}
+                      icon={<DeleteOutlined />}
+                    />
+              ]}
+            >
+              <List.Item.Meta
+                avatar={<Avatar icon={<FilePdfOutlined />} style={{ backgroundColor: getPdfColor(pdf.id) }} />}
+                    title={pdf.clientFilename || pdf.filename}
+                description={`页数: ${pdf.totalPages || '未知'}`}
+              />
+            </List.Item>
+          )}
+            />
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button
+                type="dashed"
+                icon={<UploadOutlined />}
+                onClick={() => {
+                  setPdfListModalVisible(false);
+                  setUploadModalVisible(true);
+                }}
+                style={{ width: '100%' }}
+              >
+                上传新的PDF文件
+              </Button>
+            </div>
+      </Modal>
+        </Content>
+      </Layout>
+      
+      {/* 调试面板 */}
+      {renderDebugPanel()}
+      
+      {/* 任务状态指示器 */}
+      <TaskStatusIndicator 
+        boardId={currentExpertBoardId || (currentFile ? currentFile.key : null)} 
+      />
+      
+      {/* 全局右键菜单组件 */}
+      <GlobalContextMenu onCommand={handleContextMenuCommand} />
+    </Layout>
+  );
+}
+
+export default App;

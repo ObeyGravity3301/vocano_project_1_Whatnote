@@ -1,0 +1,60 @@
+{
+  "name": "whatnote-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "proxy": "http://localhost:8000",
+  "dependencies": {
+    "@excalidraw/excalidraw": "^0.17.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "antd": "^5.25.1",
+    "file-saver": "^2.0.5",
+    "html2canvas": "^1.4.1",
+    "katex": "^0.16.22",
+    "pdfjs-dist": "^3.11.174",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "react-pdf": "^6.2.2",
+    "react-resizable": "^3.0.5",
+    "react-rnd": "^10.5.2",
+    "react-scripts": "5.0.1",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "roughjs": "^4.5.1",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "node start.js",
+    "start-legacy": "react-scripts --openssl-legacy-provider start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@types/file-saver": "^2.0.7",
+    "@types/react-resizable": "^3.0.8",
+    "http-proxy-middleware": "^3.0.5"
+  }
+}

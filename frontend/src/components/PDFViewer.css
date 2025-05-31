@@ -1,0 +1,253 @@
+/* PDF查看器主容器 */
+.pdf-viewer-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background-color: #f0f2f5;
+}
+
+/* 顶部控制栏 */
+.pdf-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 8px;
+  background-color: #fff;
+  border-bottom: 1px solid #e8e8e8;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  min-height: 36px;
+  flex-shrink: 0;
+}
+
+/* 导航按钮区域 */
+.pdf-navigation {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 页面信息显示 */
+.page-info {
+  font-size: 13px;
+  margin: 0 4px;
+  min-width: 30px;
+  text-align: center;
+  color: #666;
+  user-select: none;
+}
+
+/* 操作按钮区域 */
+.pdf-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* PDF内容区域 */
+.pdf-content {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10px;
+  background-color: #e8e8e8;
+  position: relative;
+  min-height: 0; /* 确保可以滚动且不溢出 */
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* 底部信息栏 */
+.pdf-footer {
+  font-size: 11px;
+  padding: 2px 8px;
+  color: #666;
+  background-color: #f9f9f9;
+  border-top: 1px solid #e8e8e8;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 20px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 文件信息 */
+.file-url-info {
+  font-size: 10px;
+  color: #999;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* PDF文档样式 */
+.pdf-document {
+  background-color: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  width: 100%;
+  max-width: 100%;
+}
+
+/* PDF页面样式 */
+.pdf-page {
+  margin: 0 auto;
+  width: 100%;
+  max-width: 100%;
+}
+
+.pdf-page canvas {
+  max-width: 100% !important;
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+  margin: 0 auto;
+}
+
+/* 加载和错误提示 */
+.pdf-message {
+  padding: 20px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+}
+
+.pdf-message.error {
+  color: #f5222d;
+}
+
+.pdf-placeholder {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  width: 100%;
+  background-color: #f5f5f5;
+  border: 1px dashed #d9d9d9;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #666;
+}
+
+.pdf-error-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+/* 响应式设计 - 在小屏幕上的调整 */
+@media (max-width: 480px) {
+  .pdf-controls {
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px;
+  }
+  
+  .pdf-navigation, .pdf-actions {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .page-info {
+    min-width: 30px;
+    font-size: 12px;
+  }
+}
+
+/* 修复Document组件样式 */
+.react-pdf__Document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+}
+
+.react-pdf__Page {
+  margin: 0 0 20px 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  transition: all 0.3s ease;
+  background-color: white;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.react-pdf__Page:last-child {
+  margin-bottom: 0;
+}
+
+/* 确保canvas正确显示并能够响应大小变化 */
+.react-pdf__Page canvas {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  display: block;
+  box-sizing: border-box;
+}
+
+.pdf-controls button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  background: #1890ff;
+  color: white;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+}
+
+.pdf-controls button:hover {
+  background: #40a9ff;
+  transform: translateY(-1px);
+}
+
+.pdf-controls button:disabled {
+  background: #d9d9d9;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.pdf-controls span {
+  font-size: 14px;
+  color: #666;
+  min-width: 80px;
+  text-align: center;
+}
+
+/* 导航按钮样式优化 */
+.nav-button {
+  padding: 4px 8px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  margin: 0;
+  color: #1890ff !important;
+  transition: all 0.2s;
+  height: 24px !important;
+  width: 24px !important;
+  min-width: 24px !important;
+}
+
+.nav-button .anticon {
+  font-size: 14px;
+}
+
+.nav-button:hover {
+  background-color: rgba(24, 144, 255, 0.1) !important;
+  color: #1890ff !important;
+}
+
+.nav-button[disabled] {
+  color: rgba(0, 0, 0, 0.25) !important;
+  background-color: transparent !important;
+  cursor: not-allowed;
+} 

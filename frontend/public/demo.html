@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Excalidraw测试</title>
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@excalidraw/excalidraw@0.17.0/dist/excalidraw.production.min.js"></script>
+  <style>
+    html, body, #app {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .toolbar {
+      padding: 10px;
+      display: flex;
+      gap: 10px;
+      background-color: #f0f2f5;
+      border-bottom: 1px solid #ddd;
+    }
+    .excalidraw-wrapper {
+      height: calc(100% - 60px);
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="toolbar">
+      <button id="upload-btn">上传PDF</button>
+      <input type="file" id="pdf-input" accept="application/pdf" style="display:none">
+      <span id="filename"></span>
+      <button id="embed-btn" disabled>嵌入PDF</button>
+    </div>
+    <div class="excalidraw-wrapper" id="excalidraw-wrapper"></div>
+  </div>
+
+  <script>
+    const { useState, useEffect, useRef } = React;
+    const { createRoot } = ReactDOM;
+    const { Excalidraw, exportToSvg } = ExcalidrawLib;
+
+    let excalidrawRef = null;
+    let pdfFile = null;
+    let pdfFilename = '';
+
+    // 渲染Excalidraw
+    const App = () => {
+      const excalidrawWrapperRef = useRef(null);
+      
+      useEffect(() => {
+        const excalidrawAPIRef = { current: null };
+        
+        excalidrawRef = excalidrawAPIRef;
+        
+        if (excalidrawWrapperRef.current) {
+          ReactDOM.render(
+            React.createElement(Excalidraw, {
+              ref: excalidrawAPIRef,
+              initialData: {
+                elements: []
+              },
+              onChange: (elements, state) => {
+                console.log("变化:", elements.length);
+              }
+            }),
+            excalidrawWrapperRef.current
+          );
+        }
+
+        return () => {
+          if (excalidrawWrapperRef.current) {
+            ReactDOM.unmountComponentAtNode(excalidrawWrapperRef.current);
+          }
+        };
+      }, []);
+      
+      return React.createElement('div', {
+        ref: excalidrawWrapperRef,
+        style: { width: '100%', height: '100%' }
+      });
+    };
+
+    // 初始化应用
+    const init = () => {
+      const excalidrawWrapper = document.getElementById('excalidraw-wrapper');
+      const root = createRoot(excalidrawWrapper);
+      root.render(React.createElement(App));
+
+      const uploadBtn = document.getElementById('upload-btn');
+      const pdfInput = document.getElementById('pdf-input');
+      const embedBtn = document.getElementById('embed-btn');
+      const filenameSpan = document.getElementById('filename');
+
+      uploadBtn.addEventListener('click', () => {
+        pdfInput.click();
+      });
+
+      pdfInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file || file.type !== 'application/pdf') {
+          alert('请选择PDF文件');
+          return;
+        }
+        
+        pdfFile = file;
+        pdfFilename = file.name;
+        filenameSpan.textContent = pdfFilename;
+        embedBtn.disabled = false;
+      });
+
+      embedBtn.addEventListener('click', () => {
+        if (!pdfFile) return;
+        
+        const pdfUrl = URL.createObjectURL(pdfFile);
+        
+        // 创建一个简单的iframe元素
+        const simpleEmbed = {
+          id: `pdf-embed-${Date.now()}`,
+          type: "iframe",
+          x: 100,
+          y: 100,
+          width: 800,
+          height: 600,
+          frameData: {
+            url: pdfUrl,
+            name: pdfFilename
+          },
+          backgroundColor: "transparent",
+          strokeColor: "#1e88e5",
+          strokeWidth: 2,
+          strokeStyle: "solid",
+          roughness: 0,
+          opacity: 100,
+          groupIds: [],
+          roundness: {
+            type: 2
+          },
+          seed: Math.floor(Math.random() * 100000),
+          version: 1,
+          versionNonce: Math.floor(Math.random() * 100000),
+          isDeleted: false,
+          updated: Date.now(),
+          fillStyle: "solid",
+          locked: false
+        };
+        
+        // 创建测试元素
+        const testRectElement = {
+          id: `test-rect-${Date.now()}`,
+          type: "rectangle",
+          x: 50,
+          y: 50,
+          width: 200,
+          height: 100,
+          backgroundColor: "#4CAF50",
+          fillStyle: "solid",
+          strokeWidth: 2,
+          strokeColor: "#000000",
+          roughness: 0,
+          opacity: 100,
+          groupIds: [],
+          strokeStyle: "solid",
+          version: 1,
+          isDeleted: false,
+          roundness: {
+            type: 2
+          },
+          seed: 12345
+        };
+        
+        if (excalidrawRef && excalidrawRef.current) {
+          const elements = excalidrawRef.current.getSceneElements();
+          
+          // 添加新元素
+          excalidrawRef.current.updateScene({
+            elements: [
+              ...elements.filter(el => !el.id.startsWith('pdf-embed-')), 
+              simpleEmbed,
+              testRectElement
+            ]
+          });
+          
+          console.log('添加了PDF嵌入元素和测试矩形');
+        } else {
+          console.error('Excalidraw引用不可用');
+        }
+      });
+    };
+
+    // 当页面加载完成后初始化
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html> 

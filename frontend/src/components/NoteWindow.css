@@ -1,0 +1,357 @@
+/* 笔记窗口主容器 */
+.note-window-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: white;
+  overflow: hidden;
+}
+
+/* 笔记工具栏 */
+.note-toolbar {
+  padding: 8px 16px;
+  background-color: #fafafa;
+  border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+}
+
+/* 笔记内容区 */
+.note-content {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: calc(100% - 46px); /* 减去工具栏高度 */
+  position: relative;
+}
+
+/* 来源指示器 */
+.source-indicator {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: #999;
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: #f5f5f5;
+}
+
+.source-indicator.text {
+  color: #1890ff;
+}
+
+.source-indicator.vision {
+  color: #52c41a;
+}
+
+/* 笔记文本样式 */
+.note-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 14px;
+}
+
+.note-text h1,
+.note-text h2,
+.note-text h3,
+.note-text h4,
+.note-text h5,
+.note-text h6 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.note-text h1 {
+  font-size: 1.8em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.note-text h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.note-text h3 {
+  font-size: 1.25em;
+}
+
+.note-text p {
+  margin-bottom: 1em;
+}
+
+.note-text ul,
+.note-text ol {
+  padding-left: 2em;
+  margin-bottom: 1em;
+}
+
+.note-text li {
+  margin-bottom: 0.3em;
+}
+
+.note-text code {
+  background-color: rgba(27, 31, 35, 0.05);
+  border-radius: 3px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 85%;
+  padding: 0.2em 0.4em;
+}
+
+.note-text pre {
+  background-color: #f6f8fa;
+  border-radius: 3px;
+  padding: 16px;
+  overflow: auto;
+  margin-bottom: 1em;
+}
+
+.note-text pre code {
+  background-color: transparent;
+  padding: 0;
+}
+
+.note-text blockquote {
+  border-left: 0.25em solid #dfe2e5;
+  color: #6a737d;
+  padding: 0 1em;
+  margin: 0 0 1em 0;
+}
+
+.note-text table {
+  border-collapse: collapse;
+  margin-bottom: 1em;
+  width: 100%;
+  overflow: auto;
+}
+
+.note-text table th,
+.note-text table td {
+  border: 1px solid #dfe2e5;
+  padding: 6px 13px;
+}
+
+.note-text table tr {
+  background-color: #fff;
+  border-top: 1px solid #c6cbd1;
+}
+
+.note-text table tr:nth-child(2n) {
+  background-color: #f6f8fa;
+}
+
+.note-text img {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* 自动保存提示 */
+.autosave-indicator {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  font-size: 12px;
+  color: #999;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.autosave-indicator.visible {
+  opacity: 1;
+}
+
+/* 笔记占位符 */
+.note-placeholder {
+  color: #999;
+  text-align: center;
+  margin-top: 100px;
+  font-size: 16px;
+}
+
+/* 加载中状态 */
+.note-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+}
+
+/* 原始文本内容样式 */
+.raw-text-content {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid #f0f0f0;
+  padding: 16px;
+  border-radius: 4px;
+  background-color: #fafafa;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.note-header {
+  padding: 12px 16px;
+  background-color: #1890ff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  height: 50px;
+}
+
+.note-header h3 {
+  color: white;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.note-content-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.note-header span {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.note-header button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.3s ease;
+}
+
+.note-header button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: white;
+}
+
+.note-content textarea {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #e8e8e8;
+  border-radius: 4px;
+  padding: 8px;
+  resize: none;
+  font-size: 14px;
+  line-height: 1.5;
+  transition: all 0.3s ease;
+  flex: 1;
+}
+
+.raw-text-preview {
+  font-family: monospace;
+  line-height: 1.5;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.note-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.note-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e8e8e8;
+  background-color: #fafafa;
+}
+
+.note-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #666;
+}
+
+.note-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.note-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.8);
+}
+
+.note-placeholder {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  color: #ccc;
+  font-style: italic;
+}
+
+.raw-text-content {
+  max-height: 400px;
+  overflow: auto;
+  background-color: #f5f5f5;
+  padding: 12px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  color: #333;
+}
+
+/* 编辑模式相关样式 */
+.note-editor-textarea {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  padding: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.note-editor-textarea:focus {
+  border-color: #40a9ff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+/* 改进提示样式 */
+.improve-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #888;
+  font-style: italic;
+}
+
+/* 增强可读性 */
+.note-text p {
+  margin-bottom: 12px;
+}
+
+/* 响应式样式 */
+@media (max-width: 480px) {  .note-editor-header {    flex-direction: column;    align-items: flex-start;    gap: 8px;  }    .note-actions {    width: 100%;    justify-content: flex-end;  }}/* 专家LLM步骤进度动画 */@keyframes pulse {  0% {    opacity: 1;    transform: scale(1);  }  50% {    opacity: 0.6;    transform: scale(1.2);  }  100% {    opacity: 1;    transform: scale(1);  }}/* 步骤消息样式 */.step-message {  animation: slideInLeft 0.3s ease-out;}@keyframes slideInLeft {  from {    opacity: 0;    transform: translateX(-20px);  }  to {    opacity: 1;    transform: translateX(0);  }}/* 调试面板响应内容样式 */.debug-log-response {  max-height: 400px;  overflow-y: auto;  padding: 8px;  background-color: #fafafa;  border-radius: 4px;  margin-top: 8px;}.debug-log-response h1,.debug-log-response h2,.debug-log-response h3 {  margin-top: 16px;  margin-bottom: 8px;}.debug-log-response p {  margin-bottom: 8px;  line-height: 1.6;}.debug-log-response ul,.debug-log-response ol {  margin-bottom: 8px;  padding-left: 20px;}.debug-log-response li {  margin-bottom: 4px;} 
