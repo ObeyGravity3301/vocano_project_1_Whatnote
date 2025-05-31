@@ -8,7 +8,7 @@ from config import QWEN_API_KEY, QWEN_VL_API_KEY, API_TIMEOUT
 from llm_logger import LLMLogger
 
 logger = logging.getLogger(__name__)
-
+#dddddddddddddddddddddddddaaaaaaaaaaaaaaaaaaaaaaa
 def main_llm_annotate(text, session_id=None, file_id=None):
     """
     基于文本内容生成注释
