@@ -221,6 +221,10 @@ class SimpleExpert:
                 result = await self._improve_annotation_task(task.params)
             elif task.task_type == "generate_note":
                 result = await self._generate_note_task(task.params)
+            elif task.task_type == "generate_board_note":
+                result = await self._generate_board_note_task(task.params)
+            elif task.task_type == "improve_board_note":
+                result = await self._improve_board_note_task(task.params)
             elif task.task_type == "ask_question":
                 result = await self._ask_question_task(task.params)
             else:
@@ -451,13 +455,13 @@ PDF文件：{filename}
             raise Exception(error_msg)
     
     async def _generate_note_task(self, params: Dict[str, Any]) -> str:
-        """生成笔记任务"""
+        """生成笔记任务 - 恢复原来的40页限制和页码标注功能"""
         filename = params.get('filename')
         content = params.get('content', '')
         
         try:
             if filename:
-                # 生成PDF笔记 - 读取实际PDF内容
+                # 生成PDF笔记 - 读取实际PDF内容，恢复40页限制和页码标注
                 logger.info(f"开始生成PDF笔记，文件名: {filename}")
                 
                 # 读取PDF所有页面内容
@@ -472,7 +476,7 @@ PDF文件：{filename}
                         with open(page_file, 'r', encoding='utf-8') as f:
                             page_content = f.read().strip()
                             if page_content:  # 只添加非空页面
-                                pages_text.append(f"第{i}页:\n{page_content}")
+                                pages_text.append(page_content)
                     except Exception as e:
                         logger.warning(f"读取页面文件失败: {page_file}, 错误: {str(e)}")
                     i += 1
@@ -482,30 +486,67 @@ PDF文件：{filename}
                     logger.error(error_msg)
                     return error_msg
                 
-                # 合并所有页面内容
-                full_content = "\n\n".join(pages_text)
-                logger.info(f"成功读取PDF内容，共{len(pages_text)}页，总长度: {len(full_content)}字符")
+                # 应用40页限制和页码标注逻辑
+                total_pages = len(pages_text)
+                sample_pages = min(40, total_pages)
                 
-                # 生成笔记的提示词
-                query = f"""请为以下PDF文档内容生成详细的学习笔记。文档名称：《{filename}》
+                # 判断使用的页面范围
+                if total_pages <= 40:
+                    # 如果总页数不超过40页，使用全部页面
+                    pages_used = pages_text
+                    page_range_info = f"<参考第1页-第{total_pages}页内容>"
+                else:
+                    # 如果超过40页，取前20页和后20页
+                    front_pages = 20
+                    back_pages = 20
+                    pages_used = pages_text[:front_pages] + pages_text[-back_pages:]
+                    page_range_info = f"<参考第1页-第{front_pages}页及第{total_pages-back_pages+1}页-第{total_pages}页内容>"
+                
+                # 构建带页码标注的内容样本
+                content_samples = []
+                for i, text in enumerate(pages_used):
+                    if total_pages <= 40:
+                        # 使用全部页面时，页码是连续的
+                        page_num = i + 1
+                    else:
+                        # 使用前后20页时，需要正确计算页码
+                        if i < front_pages:
+                            page_num = i + 1
+                        else:
+                            page_num = total_pages - back_pages + (i - front_pages) + 1
+                    
+                    # 限制每页内容长度，但保留足够信息
+                    page_preview = text[:500] if len(text) > 500 else text
+                    content_samples.append(f"第{page_num}页:\n{page_preview}...")
+                
+                content = "\n\n".join(content_samples)
+                logger.info(f"成功读取PDF内容，总页数: {total_pages}，使用页数: {len(pages_used)}，总长度: {len(content)}字符")
+                
+                # 生成笔记的提示词 - 恢复页码标注要求
+                query = f"""请为以下PDF文档生成一份完整的笔记。
 
-PDF内容：
-{full_content}
+文档有 {total_pages} 页，以下是部分内容示例:
+{content}
 
-请生成一份结构化的学习笔记，包含：
-1. 文档概述
-2. 主要概念和定义
-3. 重要知识点
-4. 关键公式或原理（如有）
-5. 总结
+请生成一份完整的笔记，包括主要内容的结构化总结，使用Markdown格式，突出重点和关键概念。
+注意：只基于提供的内容生成笔记，不要添加未在原文中提及的信息。
 
-请使用Markdown格式，确保内容准确、详细且易于理解。"""
+重要要求：
+1. 在笔记中引用重要内容时，请标注相应的页码，格式为：(第X页) 或 (第X-Y页)
+2. 例如："该理论的核心观点是... (第3页)"
+3. 对于跨越多页的内容，可以标注页码范围："详细推导过程见原文 (第5-7页)"
+4. 确保页码标注准确，便于读者定位原文
+
+请开始生成笔记："""
                 
                 note_content = await self.process_query(query)
                 
                 if note_content and len(note_content) > 50:
-                    logger.info(f"成功生成PDF笔记，长度: {len(note_content)}")
-                    return note_content
+                    # 在笔记开头添加页数引用信息
+                    note_content_with_range = f"{page_range_info}\n\n{note_content}"
+                    
+                    logger.info(f"成功生成PDF笔记，长度: {len(note_content_with_range)}")
+                    return note_content_with_range
                 else:
                     error_msg = f"PDF笔记生成内容为空或过短: '{note_content}'"
                     logger.error(error_msg)
@@ -762,6 +803,164 @@ PDF内容：
                 
         except Exception as e:
             yield f"流式处理出错: {str(e)}"
+
+    async def _generate_board_note_task(self, params: Dict[str, Any]) -> str:
+        """
+        生成展板笔记任务 - 根据展板内所有PDF笔记生成综合笔记
+        """
+        start_time = time.time()
+        logger.info(f"🔄 [BOARD-NOTE] 开始生成展板笔记，展板ID: {self.board_id}")
+        
+        try:
+            # 从任务参数中获取笔记内容
+            notes_content = params.get('notes_content', '')
+            pdf_count = params.get('pdf_count', 0)
+            board_id = params.get('board_id', self.board_id)
+            
+            if not notes_content or not notes_content.strip():
+                logger.warning(f"⚠️ [BOARD-NOTE] 展板笔记内容为空，无法生成")
+                return "展板内没有足够的笔记内容用于生成综合笔记，请先为PDF文件生成笔记。"
+            
+            logger.info(f"📋 [BOARD-NOTE] 处理 {pdf_count} 个PDF的笔记内容，总长度: {len(notes_content)} 字符")
+            
+            # 构建展板笔记生成的提示词
+            board_note_prompt = f"""
+请为以下展板内容生成一份综合性的总结笔记。
+
+展板ID: {board_id}
+包含PDF文件数量: {pdf_count}
+
+展板内所有PDF文件的笔记内容:
+{notes_content}
+
+请生成一份展板总结笔记，要求：
+1. 整合所有PDF文件的核心内容
+2. 提取共同主题和知识点
+3. 建立不同文件间的关联
+4. 突出重点概念和要点
+5. 提供学习建议和总结
+
+注意：
+- 使用Markdown格式
+- 结构清晰，层次分明
+- 避免简单罗列，要有深度分析
+- 突出整体性和关联性
+- 适合作为复习和学习的总结材料
+
+请开始生成展板总结笔记：
+"""
+            
+            if self.has_llm_client and self.client:
+                logger.info(f"🤖 [BOARD-NOTE] 使用LLM生成展板笔记")
+                
+                response = self.client.chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的学术助手，擅长整合多个文档的内容并生成高质量的综合性笔记。"},
+                        {"role": "user", "content": board_note_prompt}
+                    ],
+                    max_tokens=4000,  # 展板笔记可能比较长
+                    temperature=0.7
+                )
+                
+                board_note_content = response.choices[0].message.content
+                execution_time = time.time() - start_time
+                
+                # 在开头添加展板信息和生成时间
+                final_content = f"""# 展板总结笔记
+
+**展板ID**: {board_id}  
+**PDF文件数量**: {pdf_count}  
+**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+{board_note_content}
+
+---
+
+*本笔记由AI根据展板内 {pdf_count} 个PDF文件的笔记综合生成*
+"""
+                
+                logger.info(f"✅ [BOARD-NOTE] 展板笔记生成完成，最终长度: {len(final_content)} 字符，耗时: {execution_time:.3f}秒")
+                return final_content
+                
+            else:
+                logger.warning(f"⚠️ [BOARD-NOTE] LLM客户端不可用")
+                return "LLM服务不可用，无法生成展板笔记。"
+                
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = f"展板笔记生成失败: {str(e)}"
+            logger.error(f"❌ [BOARD-NOTE] {error_msg}，耗时: {execution_time:.3f}秒", exc_info=True)
+            return error_msg
+    
+    async def _improve_board_note_task(self, params: Dict[str, Any]) -> str:
+        """
+        改进展板笔记任务
+        """
+        start_time = time.time()
+        logger.info(f"🔄 [BOARD-NOTE-IMPROVE] 开始改进展板笔记，展板ID: {self.board_id}")
+        
+        try:
+            # 从任务参数中获取内容
+            content = params.get('content', '')
+            improve_prompt = params.get('improve_prompt', '')
+            board_id = params.get('board_id', self.board_id)
+            
+            if not content or not content.strip():
+                logger.warning(f"⚠️ [BOARD-NOTE-IMPROVE] 展板笔记内容为空，无法改进")
+                return "展板笔记内容为空，无法进行改进。"
+            
+            logger.info(f"📝 [BOARD-NOTE-IMPROVE] 改进展板笔记，内容长度: {len(content)} 字符，改进提示: {improve_prompt}")
+            
+            # 构建展板笔记改进的提示词
+            improve_board_note_prompt = f"""
+请根据用户要求改进以下展板笔记：
+
+用户改进要求: {improve_prompt}
+
+当前展板笔记内容:
+{content}
+
+请根据用户的改进要求，对展板笔记进行优化和改进。保持原有的核心内容和结构，同时：
+1. 根据用户要求调整内容重点
+2. 改善表达方式和结构
+3. 增加或调整必要的细节
+4. 保持Markdown格式
+5. 确保改进后的内容更加清晰和有用
+
+请提供改进后的展板笔记：
+"""
+            
+            if self.has_llm_client and self.client:
+                logger.info(f"🤖 [BOARD-NOTE-IMPROVE] 使用LLM改进展板笔记")
+                
+                response = self.client.chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {"role": "system", "content": "你是一个专业的学术助手，擅长根据用户要求改进和优化笔记内容。"},
+                        {"role": "user", "content": improve_board_note_prompt}
+                    ],
+                    max_tokens=4000,
+                    temperature=0.7
+                )
+                
+                improved_content = response.choices[0].message.content
+                execution_time = time.time() - start_time
+                
+                logger.info(f"✅ [BOARD-NOTE-IMPROVE] 展板笔记改进完成，改进后长度: {len(improved_content)} 字符，耗时: {execution_time:.3f}秒")
+                return improved_content
+                
+            else:
+                logger.warning(f"⚠️ [BOARD-NOTE-IMPROVE] LLM客户端不可用")
+                return content  # 返回原内容
+                
+        except Exception as e:
+            execution_time = time.time() - start_time
+            error_msg = f"展板笔记改进失败: {str(e)}"
+            logger.error(f"❌ [BOARD-NOTE-IMPROVE] {error_msg}，耗时: {execution_time:.3f}秒", exc_info=True)
+            return content  # 出错时返回原内容
 
 class SimpleExpertManager:
     """简化的专家管理器"""

@@ -2182,6 +2182,7 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
     
     try:
         board_id = request_data.get('board_id')
+        task_type = request_data.get('task_type')
         task_info = request_data.get('task_info', {})
         
         if not board_id:
@@ -2191,48 +2192,61 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
                 content={"detail": "展板ID不能为空"}
             )
             
-        if not task_info or not task_info.get('type'):
-            logger.error(f"❌ [TASK-SUBMIT] 任务信息不能为空且必须指定任务类型")
+        if not task_type:
+            logger.error(f"❌ [TASK-SUBMIT] 任务类型不能为空")
             return JSONResponse(
                 status_code=400,
-                content={"detail": "任务信息不能为空且必须指定任务类型"}
+                content={"detail": "任务类型不能为空"}
             )
         
-        task_type = task_info.get('type')
-        task_params = task_info.get('params', {})
-        
-        logger.info(f"📋 [TASK-SUBMIT] 任务详情: 展板={board_id}, 类型={task_type}, 参数数量={len(task_params)}")
+        logger.info(f"📋 [TASK-SUBMIT] 提交任务: 展板={board_id}, 类型={task_type}")
         
         # 获取专家实例
-        expert_get_start = time.time()
+        expert_start_time = time.time()
         expert = simple_expert_manager.get_expert(board_id)
-        expert_get_time = time.time() - expert_get_start
-        logger.info(f"🧠 [TASK-SUBMIT] 获取专家实例耗时: {expert_get_time:.3f}s")
+        expert_time = time.time() - expert_start_time
         
-        # 提交任务
-        task_submit_start = time.time()
-        task_id = await expert.submit_task(task_type, task_params)
-        task_submit_time = time.time() - task_submit_start
+        logger.info(f"🧠 [TASK-SUBMIT] 获取专家实例完成，耗时: {expert_time:.3f}s")
+        
+        # 根据任务类型处理不同的任务
+        task_submit_start_time = time.time()
+        
+        if task_type == 'generate_board_note':
+            # 展板笔记生成任务
+            task_id = await expert.submit_task("generate_board_note", task_info)
+        elif task_type == 'improve_board_note':
+            # 展板笔记改进任务
+            task_id = await expert.submit_task("improve_board_note", task_info)
+        elif task_type in ['generate_annotation', 'improve_annotation', 'generate_note', 'ask_question']:
+            # 其他已存在的任务类型
+            task_id = await expert.submit_task(task_type, task_info)
+        else:
+            logger.error(f"❌ [TASK-SUBMIT] 不支持的任务类型: {task_type}")
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"不支持的任务类型: {task_type}"}
+            )
+        
+        task_submit_time = time.time() - task_submit_start_time
         
         if task_id:
             total_submit_time = time.time() - submit_start_time
-            logger.info(f"✅ [TASK-SUBMIT] 任务提交成功: {task_id}, 总耗时: {total_submit_time:.3f}s")
+            logger.info(f"✅ [TASK-SUBMIT] 任务提交成功: {task_id}, 总耗时: {total_submit_time:.3f}s (专家: {expert_time:.3f}s, 提交: {task_submit_time:.3f}s)")
             
             return {
                 "status": "success",
-                "task_id": task_id,
                 "board_id": board_id,
+                "task_id": task_id,
                 "task_type": task_type,
-                "message": "任务已成功提交到并发处理系统",
+                "message": f"任务已提交: {task_type}",
                 "timing": {
-                    "expert_get_time": expert_get_time,
-                    "task_submit_time": task_submit_time,
-                    "total_submit_time": total_submit_time
+                    "total_time": total_submit_time,
+                    "expert_time": expert_time,
+                    "submit_time": task_submit_time
                 }
             }
         else:
-            error_time = time.time() - submit_start_time
-            logger.error(f"❌ [TASK-SUBMIT] 任务提交失败: 返回task_id为空, 耗时: {error_time:.3f}s")
+            logger.error(f"❌ [TASK-SUBMIT] 任务提交失败: 返回task_id为空")
             return JSONResponse(
                 status_code=500,
                 content={"detail": "任务提交失败: 无法创建任务ID"}
@@ -2240,10 +2254,10 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
             
     except Exception as e:
         error_time = time.time() - submit_start_time
-        logger.error(f"❌ [TASK-SUBMIT] 提交任务异常: {str(e)}, 耗时: {error_time:.3f}s", exc_info=True)
+        logger.error(f"❌ [TASK-SUBMIT] 提交动态任务失败: {str(e)}, 耗时: {error_time:.3f}s", exc_info=True)
         return JSONResponse(
             status_code=500,
-            content={"detail": f"提交任务失败: {str(e)}"}
+            content={"detail": f"任务提交失败: {str(e)}"}
         )
 
 # 启动应用

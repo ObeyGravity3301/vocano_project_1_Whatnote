@@ -150,11 +150,11 @@ function App() {
   const [expertHistory, setExpertHistory] = useState({});  // 保存每个展板的专家对话历史
   
   // 展板笔记相关状态
-  const [boardNoteWindowVisible, setBoardNoteWindowVisible] = useState(false);
-  const [currentBoardNoteId, setCurrentBoardNoteId] = useState(null);
-  const [boardNoteWindowPosition, setBoardNoteWindowPosition] = useState({ x: 400, y: 200 });
-  const [boardNoteWindowSize, setBoardNoteWindowSize] = useState({ width: 500, height: 400 });
-  const [boardNotes, setBoardNotes] = useState({});  // 保存每个展板的笔记内容
+  const [boardNotes, setBoardNotes] = useState({});
+  const [boardNoteWindowVisible, setBoardNoteWindowVisible] = useState({});
+  const [boardNoteLoading, setBoardNoteLoading] = useState({});
+  const [boardNoteWindowPosition, setBoardNoteWindowPosition] = useState({ x: 200, y: 200 });
+  const [boardNoteWindowSize, setBoardNoteWindowSize] = useState({ width: 600, height: 400 });
   
   // 管家LLM相关状态
   const [assistantQuery, setAssistantQuery] = useState('');
@@ -1113,14 +1113,7 @@ function App() {
       }
       
       // 🔄 提交图像识别任务到动态任务队列
-      const getApiBaseUrl = () => {
-        if (process.env.REACT_APP_BACKEND_URL) {
-          return process.env.REACT_APP_BACKEND_URL;
-        }
-        return window.location.protocol + '//' + window.location.hostname + ':8000';
-      };
-
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = api.getBaseUrl();
       
       // 提交动态任务
       const taskResponse = await fetch(`${baseUrl}/api/expert/dynamic/submit`, {
@@ -3529,14 +3522,41 @@ function App() {
       case 'open_board_note':
         // 打开展板笔记
         if (data && data.boardId) {
-          // 打开该展板的笔记窗口
-          setBoardNoteWindowVisible(true);
-          setCurrentBoardNoteId(data.boardId);
-          message.success('已打开展板笔记');
+          // 检查是否已有展板笔记
+          const boardId = data.boardId;
+          if (boardNotes[boardId] && boardNotes[boardId].trim()) {
+            // 已有笔记，直接打开
+            setBoardNoteWindowVisible(prev => ({ ...prev, [boardId]: true }));
+            message.success('已打开展板笔记');
+          } else {
+            // 没有笔记，询问是否生成
+            Modal.confirm({
+              title: '生成展板笔记',
+              content: '当前展板还没有笔记，是否根据展板内的PDF笔记生成展板总结笔记？',
+              onOk() {
+                handleGenerateBoardNote(boardId);
+              },
+              okText: '生成笔记',
+              cancelText: '取消'
+            });
+          }
         } else if (currentFile) {
           // 当前课程的展板笔记
-          setShowChapterNoteWindow(true);
-          message.success('已打开课程笔记');
+          const boardId = currentFile.key;
+          if (boardNotes[boardId] && boardNotes[boardId].trim()) {
+            setBoardNoteWindowVisible(prev => ({ ...prev, [boardId]: true }));
+            message.success('已打开展板笔记');
+          } else {
+            Modal.confirm({
+              title: '生成展板笔记',
+              content: '当前展板还没有笔记，是否根据展板内的PDF笔记生成展板总结笔记？',
+              onOk() {
+                handleGenerateBoardNote(boardId);
+              },
+              okText: '生成笔记',
+              cancelText: '取消'
+            });
+          }
         } else {
           message.warning('未找到展板信息');
         }
@@ -3932,14 +3952,7 @@ function App() {
       message.info(`🚀 开始测试并发注释生成 - ${visiblePdfs.length}个PDF同时处理`);
 
       // 获取API基础URL
-      const getApiBaseUrl = () => {
-        if (process.env.REACT_APP_BACKEND_URL) {
-          return process.env.REACT_APP_BACKEND_URL;
-        }
-        return window.location.protocol + '//' + window.location.hostname + ':8000';
-      };
-
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = api.getBaseUrl();
 
       // 为每个可见的PDF提交动态任务
       const taskPromises = visiblePdfs.map(async (pdf, index) => {
@@ -4550,6 +4563,320 @@ function App() {
     );
   };
 
+  // 更新展板笔记
+  const updateBoardNote = (boardId, content) => {
+    setBoardNotes(prev => ({
+      ...prev,
+      [boardId]: content
+    }));
+    
+    // 存储到localStorage以持久化保存
+    localStorage.setItem('whatnote-board-notes', JSON.stringify({
+      ...boardNotes,
+      [boardId]: content
+    }));
+  };
+
+  // 处理展板笔记AI生成
+  const handleGenerateBoardNote = async (boardId) => {
+    if (!boardId) {
+      message.warning('未找到展板信息');
+      return;
+    }
+    
+    try {
+      // 获取当前展板下的所有PDF的笔记内容
+      // 修复：使用boardId而不是直接从courseFiles获取
+      let currentFiles = [];
+      
+      // 如果boardId与currentFile.key匹配，使用currentFile
+      if (currentFile && currentFile.key === boardId) {
+        currentFiles = courseFiles[currentFile.key] || [];
+      } else {
+        // 否则尝试从courseFiles中查找匹配的boardId
+        currentFiles = courseFiles[boardId] || [];
+      }
+      
+      console.log(`🔍 展板ID: ${boardId}, 找到PDF文件数量: ${currentFiles.length}`);
+      
+      if (currentFiles.length === 0) {
+        message.warning('当前展板没有PDF文件，无法生成展板笔记');
+        return;
+      }
+      
+      // 收集所有PDF的笔记内容
+      const allNotes = [];
+      for (const pdf of currentFiles) {
+        if (pdf.note && pdf.note.trim()) {
+          const filename = pdf.clientFilename || pdf.filename || '未知文件';
+          allNotes.push({
+            filename: filename,
+            note: pdf.note,
+            pages: pdf.totalPages || '未知'
+          });
+        }
+      }
+      
+      console.log(`📝 收集到有笔记的PDF数量: ${allNotes.length}/${currentFiles.length}`);
+      
+      if (allNotes.length === 0) {
+        message.warning('当前展板的PDF文件都没有生成笔记，请先为PDF文件生成笔记');
+        return;
+      }
+      
+      // 设置加载状态
+      setBoardNoteLoading(prev => ({ ...prev, [boardId]: true }));
+      
+      console.log(`🔄 开始生成展板笔记: ${boardId}`);
+      console.log(`📋 收集到 ${allNotes.length} 个PDF笔记`);
+      
+      // 构建展板笔记生成的输入内容
+      const notesContent = allNotes.map(item => 
+        `## ${item.filename} (共${item.pages}页)\n\n${item.note}`
+      ).join('\n\n---\n\n');
+      
+      // 调用API生成展板笔记
+      const requestData = { 
+        content: notesContent, 
+        board_id: boardId,
+        note_type: 'board_summary'
+      };
+      
+      // 使用专家LLM的笔记生成API，传递特殊的展板笔记标识
+      const response = await fetch(`${api.getBaseUrl()}/api/expert/dynamic/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          board_id: boardId,
+          task_type: 'generate_board_note',
+          task_info: {
+            notes_content: notesContent,
+            pdf_count: allNotes.length,
+            board_id: boardId
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API调用失败: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      const taskId = result.task_id;
+      
+      if (!taskId) {
+        throw new Error('未获得任务ID');
+      }
+      
+      // 轮询获取结果
+      const maxPolls = 30;
+      const pollInterval = 2000;
+      let pollCount = 0;
+      
+      const pollResult = async () => {
+        try {
+          const pollResponse = await fetch(`${api.getBaseUrl()}/api/expert/dynamic/result/${taskId}`);
+          
+          if (!pollResponse.ok) {
+            throw new Error(`获取结果失败: ${pollResponse.status}`);
+          }
+          
+          const pollData = await pollResponse.json();
+          
+          if (pollData.status === 'completed' && pollData.result) {
+            console.log(`✅ 展板笔记生成成功: ${boardId}`);
+            
+            // 更新展板笔记
+            updateBoardNote(boardId, pollData.result);
+            
+            // 显示展板笔记窗口
+            setBoardNoteWindowVisible(prev => ({ ...prev, [boardId]: true }));
+            
+            message.success('展板笔记生成成功');
+            
+            setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+            return;
+          } else if (pollData.status === 'failed') {
+            throw new Error(pollData.error || '任务执行失败');
+          } else if (pollData.status === 'pending' || pollData.status === 'running') {
+            pollCount++;
+            if (pollCount < maxPolls) {
+              setTimeout(pollResult, pollInterval);
+            } else {
+              throw new Error('任务超时');
+            }
+          }
+        } catch (error) {
+          console.error('轮询结果出错:', error);
+          setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+          throw error;
+        }
+      };
+      
+      // 开始轮询
+      setTimeout(pollResult, pollInterval);
+      
+    } catch (error) {
+      console.error('❌ 展板笔记生成失败:', error);
+      message.error(`展板笔记生成失败: ${error.message}`);
+      
+      // 重置加载状态
+      setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+    }
+  };
+  
+  // 处理展板笔记AI完善
+  const handleImproveBoardNote = async (boardId, content, improvePrompt = '') => {
+    if (!boardId) {
+      message.warning('未找到展板信息');
+      return content;
+    }
+    
+    try {
+      // 设置加载状态
+      setBoardNoteLoading(prev => ({ ...prev, [boardId]: true }));
+      
+      console.log(`🔄 开始通过AI完善展板笔记: ${boardId}`);
+      console.log(`👉 用户改进提示: "${improvePrompt}"`);
+      
+      // 使用API客户端完善笔记
+      const requestData = { 
+        content, 
+        improve_prompt: improvePrompt || "",
+        board_id: boardId
+      };
+      
+      // 调用专家LLM改进API
+      const response = await fetch(`${api.getBaseUrl()}/api/expert/dynamic/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          board_id: boardId,
+          task_type: 'improve_board_note',
+          task_info: {
+            content: content,
+            improve_prompt: improvePrompt,
+            board_id: boardId
+          }
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API调用失败: ${response.status}`);
+      }
+      
+      const result = await response.json();
+      const taskId = result.task_id;
+      
+      if (!taskId) {
+        throw new Error('未获得任务ID');
+      }
+      
+      // 轮询获取结果
+      const maxPolls = 30;
+      const pollInterval = 2000;
+      let pollCount = 0;
+      
+      const pollResult = async () => {
+        try {
+          const pollResponse = await fetch(`${api.getBaseUrl()}/api/expert/dynamic/result/${taskId}`);
+          
+          if (!pollResponse.ok) {
+            throw new Error(`获取结果失败: ${pollResponse.status}`);
+          }
+          
+          const pollData = await pollResponse.json();
+          
+          if (pollData.status === 'completed' && pollData.result) {
+            console.log(`✅ 展板笔记完善成功: ${boardId}`);
+            
+            // 更新展板笔记
+            const improvedContent = pollData.result;
+            updateBoardNote(boardId, improvedContent);
+            
+            message.success('展板笔记完善成功');
+            
+            setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+            return improvedContent;
+          } else if (pollData.status === 'failed') {
+            throw new Error(pollData.error || '任务执行失败');
+          } else if (pollData.status === 'pending' || pollData.status === 'running') {
+            pollCount++;
+            if (pollCount < maxPolls) {
+              setTimeout(pollResult, pollInterval);
+            } else {
+              throw new Error('任务超时');
+            }
+          }
+        } catch (error) {
+          console.error('轮询结果出错:', error);
+          setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+          throw error;
+        }
+      };
+      
+      // 开始轮询
+      setTimeout(pollResult, pollInterval);
+      
+      return content; // 先返回原内容，异步更新
+      
+    } catch (err) {
+      console.error("❌ 完善展板笔记失败:", err);
+      message.error("完善展板笔记失败");
+      
+      // 确保加载状态结束
+      setBoardNoteLoading(prev => ({ ...prev, [boardId]: false }));
+      
+      return content;
+    }
+  };
+  
+  // 加载展板笔记
+  useEffect(() => {
+    try {
+      const savedNotes = localStorage.getItem('whatnote-board-notes');
+      if (savedNotes) {
+        setBoardNotes(JSON.parse(savedNotes));
+      }
+    } catch (error) {
+      console.error('加载展板笔记失败:', error);
+    }
+  }, []);
+
+  // 生成展板笔记窗口的右键菜单选项
+  const generateBoardNoteContextMenu = (boardId) => {
+    if (!boardId) return [];
+
+    return [
+      {
+        label: '置顶窗口',
+        onClick: () => handleBringWindowToTop(boardId, 'boardNote'),
+        icon: <VerticalAlignTopOutlined />
+      },
+      {
+        label: '重新生成笔记',
+        onClick: () => handleGenerateBoardNote(boardId),
+        icon: <FileTextOutlined />
+      },
+      {
+        label: '改进笔记',
+        onClick: () => {
+          const content = boardNotes[boardId] || '';
+          const improvePrompt = window.prompt('请输入改进提示（例如：增加总结）', '重新整理结构，使内容更清晰');
+          if (improvePrompt) {
+            handleImproveBoardNote(boardId, content, improvePrompt);
+          }
+        },
+        icon: <FileTextOutlined />
+      },
+      {
+        label: '关闭窗口',
+        onClick: () => setBoardNoteWindowVisible(prev => ({ ...prev, [boardId]: false })),
+        icon: <CloseOutlined />
+      }
+    ];
+  };
+
   return (
     <Layout style={{ height: "100vh" }}>
       {/* 调试面板 */}
@@ -4911,6 +5238,43 @@ function App() {
               </Button>
             </div>
       </Modal>
+
+          {/* 展板笔记窗口 */}
+          {currentFile && boardNoteWindowVisible[currentFile.key] && (
+            <DraggableWindow
+              key={`boardNote-${currentFile.key}`}
+              title={`展板笔记: ${currentFile.title || ''}`}
+              defaultPosition={boardNoteWindowPosition}
+              defaultSize={boardNoteWindowSize}
+              onClose={() => setBoardNoteWindowVisible(prev => ({ ...prev, [currentFile.key]: false }))}
+              onDragStop={(e, data) => setBoardNoteWindowPosition(data)}
+              onResize={(e, dir, ref, delta, pos) => {
+                const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+                setBoardNoteWindowSize(newSize);
+              }}
+              zIndex={600}  // 展板笔记窗口z-index
+              windowId={`boardNote:${currentFile.key}`}
+              windowType="boardNote"
+              onBringToFront={() => handleBringNonPdfWindowToFront(`boardNote:${currentFile.key}`, 'boardNote')}
+              isPinned={pinnedWindows.some(w => w.pdfId === 'boardNote' && w.windowName === currentFile.key)}
+              onTogglePin={() => handleToggleWindowPin(`boardNote:${currentFile.key}`)}
+              onContextMenu={() => generateBoardNoteContextMenu(currentFile.key)}
+              titleBarColor="#999"  // 展板笔记使用灰色标题栏，表示不隶属于任何PDF
+              resizable
+            >
+              <UserNoteEditor
+                content={boardNotes[currentFile.key] || ''}
+                onChange={(content) => updateBoardNote(currentFile.key, content)}
+                onImprove={(content, improvePrompt) => handleImproveBoardNote(currentFile.key, content, improvePrompt)}
+                placeholder="展板笔记将根据展板内所有PDF的笔记综合生成..."
+                isLoading={boardNoteLoading[currentFile.key] || false}
+                editorTitle="展板笔记"
+                color="#999"  // 使用灰色主题
+                showGenerateButton={true}
+                onGenerate={() => handleGenerateBoardNote(currentFile.key)}
+              />
+            </DraggableWindow>
+          )}
         </Content>
       </Layout>
       

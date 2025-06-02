@@ -13,12 +13,15 @@ const UserNoteEditor = ({
   loading = false,
   editorTitle = '用户笔记',
   color = '#1890ff',
-  onAIImprove = null
+  onAIImprove = null,
+  showGenerateButton = false,
+  onGenerate = null
 }) => {
   console.log('🔍 UserNoteEditor渲染 - 收到props:', { 
     contentLength: content?.length || 0,
     contentPreview: content ? content.substring(0, 50) + '...' : '无内容',
     loading,
+    showGenerateButton,
     timestamp: new Date().toLocaleTimeString()
   });
   
@@ -192,6 +195,17 @@ const UserNoteEditor = ({
                       />
                     </Tooltip>
                   )}
+                  {showGenerateButton && onGenerate && (
+                    <Tooltip title="AI生成笔记">
+                      <Button 
+                        type="text" 
+                        icon={<FileTextOutlined />} 
+                        onClick={onGenerate}
+                        disabled={loading || isImproving}
+                        style={{ color: color }}
+                      />
+                    </Tooltip>
+                  )}
                   <Tooltip title="预览模式">
                     <Button 
                       type="text" 
@@ -202,14 +216,27 @@ const UserNoteEditor = ({
                   </Tooltip>
                 </>
               ) : (
-                <Tooltip title="编辑">
-                  <Button 
-                    type="text" 
-                    icon={<EditOutlined />} 
-                    onClick={toggleEditMode}
-                    disabled={loading || isImproving}
-                  />
-                </Tooltip>
+                <>
+                  {showGenerateButton && onGenerate && !localContent && (
+                    <Tooltip title="AI生成笔记">
+                      <Button 
+                        type="text" 
+                        icon={<FileTextOutlined />} 
+                        onClick={onGenerate}
+                        disabled={loading || isImproving}
+                        style={{ color: color }}
+                      />
+                    </Tooltip>
+                  )}
+                  <Tooltip title="编辑">
+                    <Button 
+                      type="text" 
+                      icon={<EditOutlined />} 
+                      onClick={toggleEditMode}
+                      disabled={loading || isImproving}
+                    />
+                  </Tooltip>
+                </>
               )}
             </>
           )}
