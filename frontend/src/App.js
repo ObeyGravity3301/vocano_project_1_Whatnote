@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Layout, Button, Input, message, Upload, Tooltip, Modal, List, Avatar, Dropdown, Menu, Spin, Tabs } from "antd";
+import { Layout, Button, Input, message, Upload, Tooltip, Modal, List, Avatar, Dropdown, Menu, Spin, Tabs, ConfigProvider } from "antd";
 import { FileAddOutlined, UploadOutlined, FilePdfOutlined, DeleteOutlined, PlusOutlined, DownOutlined, FileTextOutlined, VerticalAlignTopOutlined, ArrowsAltOutlined, CloseOutlined, RobotOutlined, BugOutlined, QuestionCircleOutlined } from '@ant-design/icons';
 import { Resizable } from 'react-resizable';
 import "antd/dist/reset.css";
@@ -573,6 +573,8 @@ function App() {
 
   // 生成整本笔记
   const handleGenerateNote = async (pdfId) => {
+    console.log('🚀 [DEBUG] handleGenerateNote 开始执行:', { pdfId, currentFileKey: currentFile?.key });
+    
     // 获取指定的PDF文件，而不是依赖当前活动的PDF
     const targetPdf = pdfId && currentFile ? 
       courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId) : 
@@ -582,6 +584,14 @@ function App() {
       message.warning('请先选择一个PDF文件');
       return;
     }
+    
+    console.log('🎯 [DEBUG] 目标PDF文件:', {
+      pdfId: targetPdf.id,
+      filename: targetPdf.filename,
+      clientFilename: targetPdf.clientFilename,
+      serverFilename: targetPdf.serverFilename,
+      currentNote: targetPdf.note?.substring(0, 100) + '...'
+    });
     
     // 使用目标PDF的ID，而不是活动PDF的ID
     const targetPdfId = targetPdf.id;
@@ -602,42 +612,201 @@ function App() {
     updatePdfProperty(targetPdfId, 'noteLoading', true);
     
     try {
-      // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后使用为课程文件生成的展板ID
-      let boardId = currentExpertBoardId || getBoardIdForCourseFile(currentFile?.key);
-      
-      // 如果没有currentExpertBoardId，设置它为课程文件对应的展板ID确保一致性
+      // 确保使用统一的boardId
+      let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
       if (!currentExpertBoardId && currentFile) {
-        const mappedBoardId = getBoardIdForCourseFile(currentFile.key);
-        setCurrentExpertBoardId(mappedBoardId);
-        boardId = mappedBoardId;
+        setCurrentExpertBoardId(currentFile.key);
+        boardId = currentFile.key;
       }
-      
-      console.log(`📊 使用展板ID: ${boardId}`);
-      console.log(`📊 currentExpertBoardId: ${currentExpertBoardId}`);
-      console.log(`📊 currentFile.key: ${currentFile?.key}`);
       
       if (!boardId) {
         throw new Error('无法确定展板ID');
       }
       
-      // 使用API客户端生成笔记
-      const data = await api.generatePdfNote(serverFilename, null, boardId);
+      console.log(`📊 笔记生成使用展板ID: ${boardId}`);
       
-      const noteContent = data.note || "无笔记内容";
+      // 调用API生成笔记
+      console.log('🌐 [DEBUG] 即将调用API:', {
+        method: 'api.generatePdfNote',
+        params: { serverFilename, sessionId: null, boardId }
+      });
       
-      // 更新笔记内容
-      console.log(`✅ ${targetPdf.clientFilename || targetPdf.filename}(ID:${targetPdfId}) 笔记内容获取成功: ${noteContent.length}字符`);
-      console.log(`笔记内容预览: ${noteContent.substring(0, 100)}...`);
+      const result = await api.generatePdfNote(serverFilename, null, boardId);
       
-      // 更新note属性（原始AI生成的笔记）
-      updatePdfProperty(targetPdfId, 'note', noteContent);
-      message.success('笔记生成成功');
-    } catch (err) {
-      console.error("❌ 生成笔记失败:", err);
-      message.error("生成笔记失败");
-    } finally {
+      console.log('🔍 [DEBUG] API原始响应:', result);
+      console.log('🔍 笔记生成API响应:', {
+        resultKeys: Object.keys(result || {}),
+        hasResult: !!result?.result,
+        resultLength: result?.result?.length || 0,
+        resultPreview: result?.result?.substring(0, 200) + '...'
+      });
+      
+      // 🔧 统一数据提取：API返回格式为 {result: "笔记内容"}
+      const noteContent = result?.result || result?.note || result || '';
+      
+      console.log('📝 [DEBUG] 提取的笔记内容:', {
+        contentLength: noteContent.length,
+        contentPreview: noteContent.substring(0, 200) + '...',
+        isValid: !!(noteContent && noteContent.trim())
+      });
+      
+      if (noteContent && noteContent.trim()) {
+        console.log(`✅ 成功生成笔记，长度: ${noteContent.length} 字符`);
+        
+        // 🔧 直接更新状态，确保数据正确存储
+        console.log('🔄 [DEBUG] 即将更新courseFiles状态...');
+        console.log('🔄 [DEBUG] 更新前的courseFiles:', {
+          currentFileKey: currentFile.key,
+          pdfsCount: courseFiles[currentFile.key]?.length || 0,
+          targetPdfExists: !!courseFiles[currentFile.key]?.find(p => p.id === targetPdfId),
+          targetPdfCurrentNote: courseFiles[currentFile.key]?.find(p => p.id === targetPdfId)?.note?.substring(0, 100) + '...'
+        });
+        
+        setCourseFiles(prev => {
+          console.log('📊 [DEBUG] setCourseFiles回调执行中...');
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(p => p.id === targetPdfId);
+          
+          console.log('🔍 [DEBUG] 查找目标PDF:', {
+            targetPdfId,
+            pdfIndex,
+            totalPdfs: filePdfs.length,
+            allPdfIds: filePdfs.map(p => p.id)
+          });
+          
+          if (pdfIndex !== -1) {
+            const oldNote = filePdfs[pdfIndex].note;
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              note: noteContent,  // 存储到note字段
+              noteLoading: false
+            };
+            
+            console.log('📝 [DEBUG] PDF状态已更新:', {
+              pdfId: targetPdfId,
+              oldNoteLength: oldNote?.length || 0,
+              newNoteLength: noteContent.length,
+              noteChanged: oldNote !== noteContent,
+              storedNotePreview: filePdfs[pdfIndex].note.substring(0, 100) + '...'
+            });
+            
+            const newState = {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+            
+            console.log('🎯 [DEBUG] 新状态即将返回:', {
+              fileKey: currentFile.key,
+              pdfsCount: newState[currentFile.key]?.length || 0,
+              updatedPdfNote: newState[currentFile.key]?.find(p => p.id === targetPdfId)?.note?.substring(0, 100) + '...'
+            });
+            
+            return newState;
+          } else {
+            console.error('❌ [DEBUG] 未找到目标PDF进行更新!');
+          }
+          
+          return prev;
+        });
+        
+        // 延迟检查状态是否正确更新
+        setTimeout(() => {
+          const updatedPdf = courseFiles[currentFile.key]?.find(p => p.id === targetPdfId);
+          console.log('⏰ [DEBUG] 状态更新后检查:', {
+            pdfExists: !!updatedPdf,
+            noteLength: updatedPdf?.note?.length || 0,
+            notePreview: updatedPdf?.note?.substring(0, 100) + '...',
+            noteLoading: updatedPdf?.noteLoading
+          });
+        }, 100);
+        
+        // 记录LLM交互日志到调试面板
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `pdf-note-generation-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `生成PDF笔记: ${targetPdf.clientFilename || targetPdf.filename}`,
+            response: noteContent,
+            requestBody: {
+              filename: serverFilename,
+              session_id: null,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'pdf_note_generation',
+              requestType: 'note_generation',
+              filename: serverFilename,
+              boardId: boardId,
+              streaming: false,
+              taskBased: true,
+              contentLength: noteContent.length
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        console.log('📡 [DEBUG] 调试面板事件已发送:', logEvent.detail);
+        
+        message.success('笔记生成成功!');
+      } else {
+        console.error('❌ [DEBUG] 笔记生成响应中没有找到有效内容:', result);
+        message.error('未能生成有效笔记，请重试');
+        updatePdfProperty(targetPdfId, 'noteLoading', false);
+        
+        // 为失败情况记录调试日志
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `pdf-note-generation-failed-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `生成PDF笔记失败: ${targetPdf.clientFilename || targetPdf.filename}`,
+            response: '响应无效或为空',
+            requestBody: {
+              filename: serverFilename,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'pdf_note_generation',
+              requestType: 'note_generation_failed',
+              filename: serverFilename,
+              boardId: boardId,
+              error: '响应内容无效'
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        console.log('📡 [DEBUG] 失败调试面板事件已发送:', logEvent.detail);
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] 生成笔记异常:', error);
+      message.error(`生成笔记失败: ${error.message}`);
       updatePdfProperty(targetPdfId, 'noteLoading', false);
+      
+      // 为错误情况记录调试日志
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `pdf-note-generation-error-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `生成PDF笔记错误: ${targetPdf.clientFilename || targetPdf.filename}`,
+          response: `错误: ${error.message}`,
+          requestBody: {
+            filename: serverFilename,
+            board_id: currentExpertBoardId || (currentFile ? currentFile.key : null)
+          },
+          metadata: {
+            operation: 'pdf_note_generation',
+            requestType: 'note_generation_error',
+            filename: serverFilename,
+            error: error.message
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
+      console.log('📡 [DEBUG] 错误调试面板事件已发送:', logEvent.detail);
     }
+    
+    console.log('🏁 [DEBUG] handleGenerateNote 执行完成');
   };
 
   // 为指定页面生成注释
@@ -650,13 +819,21 @@ function App() {
     const pageNum = pdf.currentPage;
     const filename = pdf.filename || pdf.clientFilename;
     
+    // 确保使用统一的boardId - 移到函数开始处
+    let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+    if (!currentExpertBoardId && currentFile) {
+      setCurrentExpertBoardId(currentFile.key);
+      boardId = currentFile.key;
+    }
+    
     console.log(`🔄 开始为 ${filename}(ID:${pdfId}) 第${pageNum}页生成注释...`);
+    console.log(`📊 注释生成使用展板ID: ${boardId}`);
     
     // 更新状态为"正在生成注释"
     updatePdfProperty(pdfId, 'annotationLoading', true);
     
     try {
-      // 确保笔记窗口可见以便查看生成结果
+      // 确保注释窗口可见
       if (!pdf.windows.annotation.visible) {
         handleWindowChange(pdfId, 'annotation', { visible: true });
       }
@@ -664,68 +841,66 @@ function App() {
       // 获取当前页面已有的注释（如果有）
       const currentAnnotation = pdf.pageAnnotations && pdf.pageAnnotations[pageNum] ? pdf.pageAnnotations[pageNum] : null;
       
-      // 获取或创建一个会话ID
+      // 获取或创建会话ID
       const sessionId = pdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      
-      // 如果没有会话ID，则保存新的会话ID
       if (!pdf.sessionId) {
         updatePdfProperty(pdfId, 'sessionId', sessionId);
       }
-      
-      console.log(`使用API客户端生成注释，会话ID: ${sessionId}, 当前注释长度: ${currentAnnotation ? currentAnnotation.length : 0}字符`);
-      
-      // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后是currentFile.key
-      let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
-      
-      // 如果没有currentExpertBoardId，设置它为currentFile.key确保一致性
-      if (!currentExpertBoardId && currentFile) {
-        setCurrentExpertBoardId(currentFile.key);
-        boardId = currentFile.key;
-      }
-      
-      console.log(`📊 注释生成使用展板ID: ${boardId}`);
       
       if (!boardId) {
         throw new Error('无法确定展板ID');
       }
       
-      // 调用API客户端生成注释，首次生成时不传递currentAnnotation
+      // 调用API客户端生成注释
       const result = await api.generateAnnotation(
         filename, 
         pageNum, 
         sessionId, 
         currentAnnotation, 
         userImproveRequest,
-        boardId // 传递展板ID
+        boardId
       );
       
-      // 更新注释 - 检查result.annotation或result.note字段
-      if (result && (result.annotation || result.note)) {
-        const annotation = result.annotation || result.note; // 使用annotation字段，如果不存在则使用note字段
-        const annotationSource = result.source || 'text';
+      console.log('🔍 注释生成API响应:', {
+        resultKeys: Object.keys(result || {}),
+        hasAnnotation: !!result?.annotation,
+        hasNote: !!result?.note,
+        resultLength: (result?.annotation || result?.note || '').length
+      });
+      
+      // 🔧 统一数据提取：API可能返回annotation或note字段
+      const annotation = result?.annotation || result?.note || result || '';
+      const annotationSource = result?.source || 'text';
+      
+      if (annotation && annotation.trim()) {
+        console.log(`✅ 成功生成注释，长度: ${annotation.length} 字符`);
         
-        console.log(`收到注释内容: ${annotation.substring(0, 50)}... (${annotation.length}字符)`);
-        
-        // 更新页面注释
+        // 🔧 直接更新状态，确保数据正确存储
         setCourseFiles(prev => {
           const filePdfs = [...(prev[currentFile.key] || [])];
           const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
           
           if (pdfIndex !== -1) {
-            // 更新注释和来源
             filePdfs[pdfIndex] = {
               ...filePdfs[pdfIndex],
               pageAnnotations: {
                 ...filePdfs[pdfIndex].pageAnnotations,
-                [pageNum]: annotation
+                [pageNum]: annotation  // 存储到pageAnnotations
               },
               pageAnnotationSources: {
                 ...filePdfs[pdfIndex].pageAnnotationSources,
                 [pageNum]: annotationSource
               },
-              annotation: annotation, // 同时更新当前显示的注释
+              annotation: annotation,  // 同时更新当前显示的注释
               annotationLoading: false
             };
+            
+            console.log('📝 注释已存储到状态:', {
+              pdfId: pdfId,
+              pageNum: pageNum,
+              annotationLength: annotation.length,
+              storedAnnotationPreview: annotation.substring(0, 100) + '...'
+            });
             
             return {
               ...prev,
@@ -736,16 +911,98 @@ function App() {
           return prev;
         });
         
-        message.success('笔记生成成功!');
+        // 记录LLM交互日志到调试面板
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `annotation-generation-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `生成页面注释: ${filename} 第${pageNum}页`,
+            response: annotation,
+            requestBody: {
+              filename: filename,
+              page_number: pageNum,
+              session_id: sessionId,
+              current_annotation: currentAnnotation,
+              improve_request: userImproveRequest,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'annotation_generation',
+              requestType: 'generate_annotation',
+              filename: filename,
+              pageNumber: pageNum,
+              sessionId: sessionId,
+              boardId: boardId,
+              streaming: false,
+              taskBased: true,
+              contentLength: annotation.length,
+              source: annotationSource
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        
+        message.success('注释生成成功!');
       } else {
         console.error('注释生成响应中没有找到有效内容:', result);
-        message.error('未能生成有效笔记，请重试');
+        message.error('未能生成有效注释，请重试');
         updatePdfProperty(pdfId, 'annotationLoading', false);
+        
+        // 为失败情况记录调试日志
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `annotation-generation-failed-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `生成页面注释失败: ${filename} 第${pageNum}页`,
+            response: '响应无效或为空',
+            requestBody: {
+              filename: filename,
+              page_number: pageNum,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'annotation_generation',
+              requestType: 'generate_annotation_failed',
+              filename: filename,
+              pageNumber: pageNum,
+              boardId: boardId,
+              error: '响应内容无效'
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
       }
     } catch (error) {
-      console.error(' ❌ 生成注释失败:', error);
+      console.error('❌ 生成注释失败:', error);
       message.error(`生成注释失败: ${error.message}`);
       updatePdfProperty(pdfId, 'annotationLoading', false);
+      
+      // 为错误情况记录调试日志
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `annotation-generation-error-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `生成页面注释错误: ${filename} 第${pageNum}页`,
+          response: `错误: ${error.message}`,
+          requestBody: {
+            filename: filename,
+            page_number: pageNum,
+            board_id: boardId
+          },
+          metadata: {
+            operation: 'annotation_generation',
+            requestType: 'generate_annotation_error',
+            filename: filename,
+            pageNumber: pageNum,
+            boardId: boardId,
+            error: error.message
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
     }
   };
 
@@ -1922,166 +2179,270 @@ function App() {
   
   // 处理改进注释
   const handleImproveAnnotation = async (pdfId, pageNum, content, improvePrompt) => {
-    console.log('🔄 App - 改进注释:', {pdfId, pageNum, contentLength: content?.length || 0, improvePrompt});
+    console.log('🚀 [DEBUG] handleImproveAnnotation 开始执行:', {
+      pdfId, 
+      pageNum, 
+      contentLength: content?.length || 0, 
+      improvePrompt,
+      currentFileKey: currentFile?.key
+    });
     
     // 获取PDF对象
     const targetPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
-    if (!targetPdf) return;
+    if (!targetPdf) {
+      console.error('❌ [DEBUG] 未找到目标PDF文件!');
+      return;
+    }
     
-    // 确保使用统一的boardId - 优先使用currentExpertBoardId，然后是currentFile.key
+    console.log('🎯 [DEBUG] 目标PDF文件:', {
+      pdfId: targetPdf.id,
+      filename: targetPdf.filename,
+      serverFilename: targetPdf.serverFilename,
+      currentPageAnnotation: targetPdf.pageAnnotations?.[pageNum]?.substring(0, 100) + '...',
+      currentAnnotation: targetPdf.annotation?.substring(0, 100) + '...'
+    });
+    
+    // 确保使用统一的boardId
     let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
-    
-    // 如果没有currentExpertBoardId，设置它为currentFile.key确保一致性
     if (!currentExpertBoardId && currentFile) {
       setCurrentExpertBoardId(currentFile.key);
       boardId = currentFile.key;
     }
 
-    console.log(`📊 改进注释使用展板ID: ${boardId}`);
+    console.log(`📊 [DEBUG] 改进注释使用展板ID: ${boardId}`);
     
     // 设置加载状态
     updatePdfProperty(pdfId, 'annotationLoading', true);
     
     try {
-      // 获取或创建一个会话ID
+      // 获取或创建会话ID
       const sessionId = targetPdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
       
-      // 记录请求体用于调试
-      const requestBody = {
-        current_annotation: content,
-        improve_request: improvePrompt,
-        board_id: boardId
-      };
-      
-      console.log('🔄 App - 改进注释请求体:', JSON.stringify(requestBody, null, 2));
-      
-      // 🔄 提交改进注释任务到动态任务队列
-      const getApiBaseUrl = () => {
-        if (process.env.REACT_APP_BACKEND_URL) {
-          return process.env.REACT_APP_BACKEND_URL;
-        }
-        return window.location.protocol + '//' + window.location.hostname + ':8000';
-      };
-
-      const baseUrl = getApiBaseUrl();
-      
-      // 提交动态任务
-      const taskResponse = await fetch(`${baseUrl}/api/expert/dynamic/submit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          board_id: boardId,
-          task_info: {
-            type: 'improve_annotation',
-            params: {
-              filename: targetPdf.serverFilename,
-              page_number: pageNum,
-              current_annotation: content,
-              improve_request: improvePrompt,
-              session_id: sessionId
-            }
-          }
-        })
+      console.log('🔄 [DEBUG] API调用参数:', {
+        serverFilename: targetPdf.serverFilename,
+        pageNum,
+        contentLength: content?.length || 0,
+        contentPreview: content?.substring(0, 100) + '...',
+        improvePrompt,
+        sessionId,
+        boardId
       });
-
-      if (!taskResponse.ok) {
-        throw new Error(`任务提交失败: ${taskResponse.status}`);
-      }
-
-      const taskData = await taskResponse.json();
-      console.log(`✅ 改进注释任务已提交: ${taskData.task_id}`);
       
-      // 等待任务完成（轮询）
-      const pollTaskResult = async (taskId) => {
-        const maxAttempts = 60; // 最多等待5分钟
-        let attempts = 0;
-        
-        while (attempts < maxAttempts) {
-          const resultResponse = await fetch(`${baseUrl}/api/expert/dynamic/result/${taskId}`);
-          if (resultResponse.ok) {
-            const result = await resultResponse.json();
-            if (result.status === 'completed') {
-              return result;  // 返回完整的result对象，而不只是result.result
-            } else if (result.status === 'failed') {
-              throw new Error(result.error || '任务执行失败');
-            }
-          }
-          
-          // 等待5秒后重试
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          attempts++;
-        }
-        
-        throw new Error('任务超时');
-      };
+      // 🔧 使用标准的改进注释API
+      console.log('🌐 [DEBUG] 即将调用API: api.improveAnnotation');
+      const result = await api.improveAnnotation(
+        targetPdf.serverFilename,
+        pageNum,
+        content,
+        improvePrompt,
+        sessionId,
+        boardId
+      );
       
-      const result = await pollTaskResult(taskData.task_id);
-      
-      // 记录LLM交互日志到调试面板
-      const logEvent = new CustomEvent('llm-interaction', {
-        detail: {
-          id: `improve-annotation-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          llmType: 'expert',
-          query: `改进注释: ${improvePrompt || '无特定要求'}`,
-          response: result.result || result || '无响应',
-          requestBody: requestBody,
-          metadata: {
-            operation: 'improve_annotation',
-            requestType: 'improve_annotation',
-            filename: targetPdf.serverFilename,
-            pageNumber: pageNum,
-            sessionId: sessionId,
-            streaming: false,
-            taskBased: true,
-            boardId: boardId
-          }
-        }
+      console.log('🔍 [DEBUG] API原始响应:', result);
+      console.log('🔍 改进注释API响应:', {
+        resultKeys: Object.keys(result || {}),
+        hasImprovedAnnotation: !!result?.improved_annotation,
+        hasAnnotation: !!result?.annotation,
+        resultLength: (result?.improved_annotation || result?.annotation || '').length,
+        resultPreview: (result?.improved_annotation || result?.annotation || '').substring(0, 200) + '...'
       });
-      window.dispatchEvent(logEvent);
       
-      // 修复数据提取逻辑 - API返回的结构是 {status: 'completed', result: '内容'}
-      const improvedAnnotation = result.result || result.note || result.annotation || result;
+      // 🔧 统一数据提取：API返回格式为 {improved_annotation: "内容"}
+      const improvedAnnotation = result?.improved_annotation || result?.annotation || result?.note || result?.result || result || '';
       
-      if (improvedAnnotation && improvedAnnotation !== '无注释内容') {
-        // 更新页面注释
+      console.log('📝 [DEBUG] 提取的改进注释内容:', {
+        contentLength: improvedAnnotation.length,
+        contentPreview: improvedAnnotation.substring(0, 200) + '...',
+        isValid: !!(improvedAnnotation && improvedAnnotation.trim()),
+        originalContentLength: content?.length || 0,
+        contentChanged: improvedAnnotation !== content
+      });
+      
+      if (improvedAnnotation && improvedAnnotation.trim()) {
+        console.log(`✅ [DEBUG] 成功改进注释，长度: ${improvedAnnotation.length} 字符`);
+        
+        // 🔧 直接更新状态，确保数据正确存储
+        console.log('🔄 [DEBUG] 即将更新courseFiles状态...');
+        console.log('🔄 [DEBUG] 更新前的状态:', {
+          currentFileKey: currentFile.key,
+          pdfsCount: courseFiles[currentFile.key]?.length || 0,
+          targetPdfExists: !!courseFiles[currentFile.key]?.find(p => p.id === pdfId),
+          currentPageAnnotation: courseFiles[currentFile.key]?.find(p => p.id === pdfId)?.pageAnnotations?.[pageNum]?.substring(0, 100) + '...',
+          currentDisplayAnnotation: courseFiles[currentFile.key]?.find(p => p.id === pdfId)?.annotation?.substring(0, 100) + '...'
+        });
+        
         setCourseFiles(prev => {
+          console.log('📊 [DEBUG] setCourseFiles回调执行中...');
           const filePdfs = [...(prev[currentFile.key] || [])];
           const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
           
+          console.log('🔍 [DEBUG] 查找目标PDF:', {
+            pdfId,
+            pdfIndex,
+            totalPdfs: filePdfs.length,
+            allPdfIds: filePdfs.map(p => p.id)
+          });
+          
           if (pdfIndex !== -1) {
+            const oldPageAnnotation = filePdfs[pdfIndex].pageAnnotations?.[pageNum];
+            const oldDisplayAnnotation = filePdfs[pdfIndex].annotation;
+            
             filePdfs[pdfIndex] = {
               ...filePdfs[pdfIndex],
               pageAnnotations: {
                 ...filePdfs[pdfIndex].pageAnnotations,
-                [pageNum]: improvedAnnotation
+                [pageNum]: improvedAnnotation  // 存储到pageAnnotations
               },
-              annotation: improvedAnnotation, // 同时更新当前显示的注释
+              annotation: improvedAnnotation,  // 同时更新当前显示的注释
               annotationLoading: false
             };
             
-            return {
+            console.log('📝 [DEBUG] 注释状态已更新:', {
+              pdfId,
+              pageNum,
+              oldPageAnnotationLength: oldPageAnnotation?.length || 0,
+              newPageAnnotationLength: improvedAnnotation.length,
+              oldDisplayAnnotationLength: oldDisplayAnnotation?.length || 0,
+              newDisplayAnnotationLength: improvedAnnotation.length,
+              pageAnnotationChanged: oldPageAnnotation !== improvedAnnotation,
+              displayAnnotationChanged: oldDisplayAnnotation !== improvedAnnotation,
+              storedPageAnnotationPreview: filePdfs[pdfIndex].pageAnnotations[pageNum].substring(0, 100) + '...',
+              storedDisplayAnnotationPreview: filePdfs[pdfIndex].annotation.substring(0, 100) + '...'
+            });
+            
+            const newState = {
               ...prev,
               [currentFile.key]: filePdfs
             };
+            
+            console.log('🎯 [DEBUG] 新状态即将返回:', {
+              fileKey: currentFile.key,
+              pdfsCount: newState[currentFile.key]?.length || 0,
+              updatedPageAnnotation: newState[currentFile.key]?.find(p => p.id === pdfId)?.pageAnnotations?.[pageNum]?.substring(0, 100) + '...',
+              updatedDisplayAnnotation: newState[currentFile.key]?.find(p => p.id === pdfId)?.annotation?.substring(0, 100) + '...'
+            });
+            
+            return newState;
+          } else {
+            console.error('❌ [DEBUG] 未找到目标PDF进行更新!');
           }
           
           return prev;
         });
         
+        // 延迟检查状态是否正确更新
+        setTimeout(() => {
+          const updatedPdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
+          console.log('⏰ [DEBUG] 注释状态更新后检查:', {
+            pdfExists: !!updatedPdf,
+            pageAnnotationLength: updatedPdf?.pageAnnotations?.[pageNum]?.length || 0,
+            displayAnnotationLength: updatedPdf?.annotation?.length || 0,
+            pageAnnotationPreview: updatedPdf?.pageAnnotations?.[pageNum]?.substring(0, 100) + '...',
+            displayAnnotationPreview: updatedPdf?.annotation?.substring(0, 100) + '...',
+            annotationLoading: updatedPdf?.annotationLoading
+          });
+        }, 100);
+        
+        // 记录LLM交互日志到调试面板
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `improve-annotation-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `改进注释: ${improvePrompt || '无特定要求'}`,
+            response: improvedAnnotation,
+            requestBody: {
+              current_annotation: content,
+              improve_request: improvePrompt,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'improve_annotation',
+              requestType: 'improve_annotation',
+              filename: targetPdf.serverFilename,
+              pageNumber: pageNum,
+              sessionId: sessionId,
+              streaming: false,
+              taskBased: false,
+              boardId: boardId,
+              contentLength: improvedAnnotation.length
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        console.log('📡 [DEBUG] 调试面板事件已发送:', logEvent.detail);
+        
         message.success('注释已改进');
       } else {
-        console.error('改进注释响应中没有找到有效内容:', result);
+        console.error('❌ [DEBUG] 改进注释响应中没有找到有效内容:', result);
         message.error('改进注释失败，请重试');
         updatePdfProperty(pdfId, 'annotationLoading', false);
+        
+        // 为失败情况记录调试日志
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `improve-annotation-failed-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `改进注释失败: ${improvePrompt || '无特定要求'}`,
+            response: '响应无效或为空',
+            requestBody: {
+              current_annotation: content,
+              improve_request: improvePrompt,
+              board_id: boardId
+            },
+            metadata: {
+              operation: 'improve_annotation',
+              requestType: 'improve_annotation_failed',
+              filename: targetPdf.serverFilename,
+              pageNumber: pageNum,
+              sessionId: sessionId,
+              streaming: false,
+              taskBased: false,
+              boardId: boardId,
+              error: '响应内容无效'
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        console.log('📡 [DEBUG] 失败调试面板事件已发送:', logEvent.detail);
       }
     } catch (error) {
-      console.error('❌ 改进注释失败:', error);
+      console.error('❌ [DEBUG] 改进注释异常:', error);
       message.error(`改进注释失败: ${error.message}`);
       updatePdfProperty(pdfId, 'annotationLoading', false);
+      
+      // 为错误情况记录调试日志
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `improve-annotation-error-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `改进注释错误: ${improvePrompt || '无特定要求'}`,
+          response: `错误: ${error.message}`,
+          requestBody: {
+            current_annotation: content,
+            improve_request: improvePrompt,
+            board_id: boardId
+          },
+          metadata: {
+            operation: 'improve_annotation',
+            requestType: 'improve_annotation_error',
+            filename: targetPdf.serverFilename,
+            pageNumber: pageNum,
+            streaming: false,
+            taskBased: false,
+            boardId: boardId,
+            error: error.message
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
+      console.log('📡 [DEBUG] 错误调试面板事件已发送:', logEvent.detail);
     }
+    
+    console.log('🏁 [DEBUG] handleImproveAnnotation 执行完成');
   };
   
   // 处理改进用户页面笔记
@@ -2248,12 +2609,44 @@ function App() {
           message.success('笔记已完善');
         }
         
+        // 记录LLM交互日志到调试面板
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `note-improvement-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `改进${isPageNote ? '页面' : ''}笔记: ${improvePrompt || '智能优化'}`,
+            response: improvedNote || '无响应',
+            requestBody: {
+              filename: currentPdf.filename || currentPdf.clientFilename,
+              content_length: content?.length || 0,
+              improve_prompt: improvePrompt,
+              is_page_note: isPageNote,
+              page_number: pageNum,
+              board_id: currentExpertBoardId
+            },
+            metadata: {
+              operation: 'note_improvement',
+              requestType: 'improve_note',
+              filename: currentPdf.filename || currentPdf.clientFilename,
+              isPageNote: isPageNote,
+              pageNumber: pageNum,
+              boardId: currentExpertBoardId,
+              streaming: false,
+              isAiNote: isAiNote,
+              contentLength: improvedNote ? improvedNote.length : 0,
+              originalLength: content?.length || 0
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        
         return improvedNote;
       } else {
         console.error('❌ App - 笔记完善响应不包含改进后的内容:', response);
         message.error('笔记完善失败: 响应无效');
-        
-        // 重置加载状态
+      
+      // 重置加载状态
         if (propertyToUpdate) {
           updatePdfProperty(pdfId, propertyToUpdate, false);
         }
@@ -2339,6 +2732,36 @@ function App() {
       }));
       
       message.success('章节笔记完善成功');
+
+      // 记录LLM交互日志到调试面板
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `chapter-note-improvement-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `改进章节笔记: ${improvePrompt || '智能优化'}`,
+          response: improvedContent || '无响应',
+          requestBody: {
+            chapter_key: currentFile?.key,
+            filename: firstPdf.serverFilename,
+            content_length: content?.length || 0,
+            improve_prompt: improvePrompt,
+            board_id: currentExpertBoardId
+          },
+          metadata: {
+            operation: 'chapter_note_improvement',
+            requestType: 'improve_chapter_note',
+            chapterKey: currentFile?.key,
+            filename: firstPdf.serverFilename,
+            boardId: currentExpertBoardId,
+            streaming: false,
+            contentLength: improvedContent ? improvedContent.length : 0,
+            originalLength: content?.length || 0,
+            pdfCount: allPdfs.length
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
 
       // 确保加载状态结束
       setChapterNoteLoading(false);
@@ -2603,8 +3026,22 @@ function App() {
 
   // 渲染PDF相关窗口
   const renderPdfWindow = (pdf, windowType = 'pdf') => {
+    console.log('🎨 [DEBUG] renderPdfWindow 被调用:', {
+      pdfId: pdf.id,
+      windowType,
+      filename: pdf.filename || pdf.clientFilename,
+      isVisible: pdf.windows[windowType]?.visible,
+      noteLength: pdf.note?.length || 0,
+      annotationLength: pdf.annotation?.length || 0,
+      pageAnnotationLength: pdf.pageAnnotations?.[pdf.currentPage]?.length || 0,
+      currentPage: pdf.currentPage
+    });
+    
     // 如果窗口不可见，则不渲染
-    if (!pdf.windows[windowType]?.visible) return null;
+    if (!pdf.windows[windowType]?.visible) {
+      console.log('⏭️ [DEBUG] 窗口不可见，跳过渲染:', { pdfId: pdf.id, windowType });
+      return null;
+    }
     
     // 获取窗口配置
     const windowConfig = pdf.windows[windowType];
@@ -2616,11 +3053,23 @@ function App() {
     
     // 输出调试日志
     if (windowType === 'note' || windowType === 'userNote') {
-      console.log(`🔍 渲染${windowType}窗口:`, {
+      console.log(`🔍 [DEBUG] 渲染${windowType}窗口:`, {
         pdfId: pdf.id,
         noteLength: pdf.note?.length || 0,
         userNoteLength: pdf.userNote?.length || 0,
-        notePreview: pdf.note ? pdf.note.substring(0, 50) + '...' : '无内容'
+        notePreview: pdf.note ? pdf.note.substring(0, 50) + '...' : '无内容',
+        userNotePreview: pdf.userNote ? pdf.userNote.substring(0, 50) + '...' : '无内容'
+      });
+    }
+    
+    if (windowType === 'annotation') {
+      console.log(`🔍 [DEBUG] 渲染${windowType}窗口:`, {
+        pdfId: pdf.id,
+        currentPage: pdf.currentPage,
+        annotationLength: pdf.annotation?.length || 0,
+        pageAnnotationLength: pdf.pageAnnotations?.[pdf.currentPage]?.length || 0,
+        annotationPreview: pdf.annotation ? pdf.annotation.substring(0, 50) + '...' : '无内容',
+        pageAnnotationPreview: pdf.pageAnnotations?.[pdf.currentPage] ? pdf.pageAnnotations[pdf.currentPage].substring(0, 50) + '...' : '无内容'
       });
     }
     
@@ -2681,6 +3130,7 @@ function App() {
       case 'note':
         content = (
           <NoteWindow 
+            key={`note-${pdf.id}-${pdf.note?.length || 0}`}
             content={pdf.note || ''}
             type="note"
             loading={pdf.noteLoading || false}
@@ -2694,6 +3144,7 @@ function App() {
       case 'annotation':
         content = (
           <NoteWindow 
+            key={`annotation-${pdf.id}-${pdf.currentPage}-${pdf.pageAnnotations?.[pdf.currentPage]?.length || 0}`}
             content={pdf.pageAnnotations && pdf.pageAnnotations[pdf.currentPage] ? pdf.pageAnnotations[pdf.currentPage] : ''}
             type="annotation"
             loading={pdf.annotationLoading || false}
@@ -3587,24 +4038,24 @@ function App() {
   const updatePdfColor = (pdfId, color) => {
     if (!currentFile) return;
     
-    setCourseFiles(prev => {
-      const filePdfs = [...(prev[currentFile.key] || [])];
+      setCourseFiles(prev => {
+        const filePdfs = [...(prev[currentFile.key] || [])];
       const pdfIndex = filePdfs.findIndex(pdf => pdf.id === pdfId);
-      
-      if (pdfIndex !== -1) {
-        filePdfs[pdfIndex] = {
-          ...filePdfs[pdfIndex],
-          customColor: color
-        };
         
-        return {
-          ...prev,
-          [currentFile.key]: filePdfs
-        };
-      }
-      
-      return prev;
-    });
+        if (pdfIndex !== -1) {
+          filePdfs[pdfIndex] = {
+            ...filePdfs[pdfIndex],
+          customColor: color
+          };
+          
+          return {
+            ...prev,
+            [currentFile.key]: filePdfs
+          };
+        }
+        
+        return prev;
+      });
   };
 
   // 获取PDF的当前颜色
@@ -3974,8 +4425,136 @@ function App() {
     }
   };
 
+  // 调试函数：检查当前PDF状态
+  const debugCurrentPdfState = (pdfId) => {
+    const targetPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
+    
+    if (!targetPdf) {
+      console.log('❌ [DEBUG] 未找到目标PDF');
+      return;
+    }
+    
+    console.log('🔍 [DEBUG] 当前PDF完整状态:', {
+      id: targetPdf.id,
+      filename: targetPdf.filename,
+      clientFilename: targetPdf.clientFilename,
+      serverFilename: targetPdf.serverFilename,
+      currentPage: targetPdf.currentPage,
+      
+      // 笔记相关
+      note: {
+        exists: !!targetPdf.note,
+        length: targetPdf.note?.length || 0,
+        preview: targetPdf.note?.substring(0, 200) + '...',
+        loading: targetPdf.noteLoading
+      },
+      
+      // 注释相关
+      annotation: {
+        current: {
+          exists: !!targetPdf.annotation,
+          length: targetPdf.annotation?.length || 0,
+          preview: targetPdf.annotation?.substring(0, 200) + '...'
+        },
+        byPage: Object.keys(targetPdf.pageAnnotations || {}).map(pageNum => ({
+          page: pageNum,
+          exists: !!targetPdf.pageAnnotations[pageNum],
+          length: targetPdf.pageAnnotations[pageNum]?.length || 0,
+          preview: targetPdf.pageAnnotations[pageNum]?.substring(0, 100) + '...'
+        })),
+        loading: targetPdf.annotationLoading
+      },
+      
+      // 窗口状态
+      windows: {
+        note: targetPdf.windows?.note || {},
+        annotation: targetPdf.windows?.annotation || {}
+      },
+      
+      // 会话信息
+      sessionId: targetPdf.sessionId
+    });
+    
+    // 同时检查全局状态
+    console.log('🌍 [DEBUG] 全局状态:', {
+      currentFileKey: currentFile?.key,
+      currentExpertBoardId: currentExpertBoardId,
+      totalPdfsInCurrentFile: courseFiles[currentFile?.key]?.length || 0,
+      allFileKeys: Object.keys(courseFiles || {})
+    });
+  };
+
+  // 渲染调试面板
+  const renderDebugInfo = () => {
+    if (process.env.NODE_ENV !== 'development') return null;
+    
+    const activePdf = getActivePdf();
+    
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 10,
+        right: 10,
+        background: 'rgba(0,0,0,0.8)',
+        color: 'white',
+        padding: '10px',
+        borderRadius: '5px',
+        fontSize: '12px',
+        zIndex: 10000,
+        maxWidth: '300px'
+      }}>
+        <div style={{ fontWeight: 'bold', marginBottom: '5px' }}>🔧 调试面板</div>
+        {activePdf && (
+          <div>
+            <div>当前PDF: {activePdf.filename}</div>
+            <div>页码: {activePdf.currentPage}</div>
+            <div>笔记长度: {activePdf.note?.length || 0}</div>
+            <div>注释长度: {activePdf.annotation?.length || 0}</div>
+            <button 
+              onClick={() => debugCurrentPdfState(activePdf.id)}
+              style={{ 
+                marginTop: '5px', 
+                padding: '2px 5px', 
+                background: '#007bff', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '3px',
+                cursor: 'pointer'
+              }}
+            >
+              详细状态
+            </button>
+            <button 
+              onClick={() => {
+                console.log('🔄 [DEBUG] 强制重新渲染所有组件');
+                // 通过更新一个无关的状态来强制重新渲染
+                setActivePdfId(prev => prev === activePdf.id ? null : activePdf.id);
+                setTimeout(() => setActivePdfId(activePdf.id), 50);
+              }}
+              style={{ 
+                marginTop: '5px', 
+                marginLeft: '5px',
+                padding: '2px 5px', 
+                background: '#28a745', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '3px',
+                cursor: 'pointer'
+              }}
+            >
+              强制刷新
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <Layout style={{ height: "100vh" }}>
+      {/* 调试面板 */}
+      {renderDebugInfo()}
+      
       {/* 键盘快捷键处理组件 */}
       <KeyboardShortcuts
         activePdfId={activePdfId}
@@ -4337,11 +4916,6 @@ function App() {
       
       {/* 调试面板 */}
       {renderDebugPanel()}
-      
-      {/* 任务状态指示器 */}
-      <TaskStatusIndicator 
-        boardId={currentExpertBoardId || (currentFile ? currentFile.key : null)} 
-      />
       
       {/* 全局右键菜单组件 */}
       <GlobalContextMenu onCommand={handleContextMenuCommand} />

@@ -12,49 +12,110 @@ const NoteWindow = ({
   content,
   type = 'note',
   loading = false,
-  filename,
-  pageNumber,
-  source,
+  filename = '',
+  pageNumber = 1,
+  source = 'text',
   onForceVisionAnnotate,
   onImprove,
-  onChange // 新增回调函数，用于保存用户编辑的内容
+  onChange
 }) => {
+  console.log('🎨 [DEBUG] NoteWindow 组件渲染:', {
+    type,
+    filename,
+    pageNumber,
+    contentLength: content?.length || 0,
+    contentPreview: content?.substring(0, 100) + '...',
+    loading,
+    source,
+    hasOnImprove: !!onImprove,
+    hasOnForceVisionAnnotate: !!onForceVisionAnnotate,
+    hasOnChange: !!onChange,
+    componentKey: `${type}-${filename}-${pageNumber}-${content?.length || 0}`
+  });
+
+  // 确保content是字符串类型
+  const ensureStringContent = (value) => {
+    if (typeof value === 'string') return value;
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch (e) {
+        return String(value);
+      }
+    }
+    return String(value);
+  };
+
+  // 使用useEffect监控props变化
+  useEffect(() => {
+    console.log('🔄 [DEBUG] NoteWindow props 变化检测:', {
+      type,
+      filename,
+      pageNumber,
+      contentLength: content?.length || 0,
+      contentChanged: content !== displayContent,
+      loading,
+      source
+    });
+  }, [content, type, loading, filename, pageNumber, source]);
+
+  // 安全获取内容
+  const safeContent = ensureStringContent(content);
+  
+  const [displayContent, setDisplayContent] = useState(safeContent);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedContent, setEditedContent] = useState('');
+  const [improving, setImproving] = useState(false);
+  const [improveModalVisible, setImproveModalVisible] = useState(false);
+  const [improvePrompt, setImprovePrompt] = useState('');
+  const [isVisionMode, setIsVisionMode] = useState(false);
   const [rawTextVisible, setRawTextVisible] = useState(false);
   const [rawText, setRawText] = useState('');
   const [loadingRawText, setLoadingRawText] = useState(false);
-  const [improving, setImproving] = useState(false);
-  const [displayContent, setDisplayContent] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedContent, setEditedContent] = useState('');
-  const [improveModalVisible, setImproveModalVisible] = useState(false);
-  const [improvePrompt, setImprovePrompt] = useState('');
-  const [autoSaveVisible, setAutoSaveVisible] = useState(false);
-  const [isVisionMode, setIsVisionMode] = useState(false);
-  
+
+  console.log('🎯 [DEBUG] NoteWindow 状态快照:', {
+    displayContentLength: displayContent?.length || 0,
+    displayContentPreview: displayContent?.substring(0, 100) + '...',
+    isEditing,
+    improving,
+    improveModalVisible,
+    isVisionMode,
+    rawTextVisible
+  });
+
+  // 监听内容变化
+  useEffect(() => {
+    console.log('🔄 [DEBUG] NoteWindow content props 变化:', {
+      oldContent: displayContent?.substring(0, 50) + '...',
+      newContent: safeContent?.substring(0, 50) + '...',
+      contentChanged: safeContent !== displayContent,
+      oldLength: displayContent?.length || 0,
+      newLength: safeContent?.length || 0
+    });
+    
+    if (safeContent !== displayContent) {
+      console.log('📝 [DEBUG] 更新 displayContent');
+      setDisplayContent(safeContent);
+      
+      // 如果正在改进中且内容发生变化，停止改进状态
+      if (improving) {
+        console.log('🛑 [DEBUG] 检测到内容更新，停止改进状态');
+        setImproving(false);
+      }
+    }
+  }, [safeContent, displayContent, improving]);
+
+  // 监听改进状态变化
+  useEffect(() => {
+    console.log('🔄 [DEBUG] NoteWindow - 改进状态变化:', improving);
+  }, [improving]);
+
   // 自动保存计时器ref
   const autoSaveTimerRef = useRef(null);
   const autoSaveIndicatorTimerRef = useRef(null);
   // 改进状态重置计时器ref
   const improvingTimerRef = useRef(null);
-  
-  // 🔧 修复：确保displayContent始终为字符串类型
-  const ensureStringContent = (content) => {
-    if (content === null || content === undefined) {
-      return '';
-    }
-    if (typeof content === 'string') {
-      return content;
-    }
-    if (typeof content === 'object') {
-      try {
-        return JSON.stringify(content);
-      } catch (e) {
-        console.warn('⚠️ NoteWindow - 无法序列化content对象:', content);
-        return String(content);
-      }
-    }
-    return String(content);
-  };
   
   // 初始化显示内容
   useEffect(() => {

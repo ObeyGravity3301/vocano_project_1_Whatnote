@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import './TaskStatusIndicator.css';
 
 const TaskStatusIndicator = ({ boardId }) => {
-  const [taskStatus, setTaskStatus] = useState({
+  // 使用静态状态，不再轮询
+  const [taskStatus] = useState({
     active_tasks: 0,
     max_concurrent: 3,
     active_task_ids: [],
@@ -13,10 +14,9 @@ const TaskStatusIndicator = ({ boardId }) => {
     board_id: null
   });
   const [isExpanded, setIsExpanded] = useState(false);
-  const [taskDetails, setTaskDetails] = useState({});
-  const [apiError, setApiError] = useState(false);
+  const [apiError] = useState(false);
 
-  // 获取API基础URL - 确保使用正确的后端端口
+  // 获取API基础URL - 保留但不使用
   const getApiBaseUrl = () => {
     if (process.env.REACT_APP_BACKEND_URL) {
       return process.env.REACT_APP_BACKEND_URL;
@@ -24,67 +24,10 @@ const TaskStatusIndicator = ({ boardId }) => {
     return window.location.protocol + '//' + window.location.hostname + ':8000';
   };
 
-  // 轮询获取任务状态
+  // 移除轮询功能 - 不再发起API请求和日志输出
   useEffect(() => {
-    if (!boardId) return;
-
-    const fetchTaskStatus = async () => {
-      try {
-        const baseUrl = getApiBaseUrl();
-        const url = `${baseUrl}/api/expert/dynamic/concurrent-status/${boardId}`;
-        
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          
-          // 从后端响应中提取并发状态，并处理字段映射
-          const backendStatus = data.concurrent_status || {};
-          
-          // 调试日志
-          console.log('🔍 状态栏更新:', {
-            boardId,
-            active_tasks: backendStatus.active_tasks,
-            max_concurrent_tasks: backendStatus.max_concurrent_tasks,
-            timestamp: new Date().toLocaleTimeString()
-          });
-          
-          setTaskStatus({
-            active_tasks: backendStatus.active_tasks || 0,
-            max_concurrent: backendStatus.max_concurrent_tasks || 3, // 映射字段名
-            active_task_ids: backendStatus.active_task_ids || [],
-            active_task_details: backendStatus.active_task_details || [],
-            recently_completed: backendStatus.recently_completed || backendStatus.completed_tasks || 0,
-            available_slots: backendStatus.available_slots || (backendStatus.max_concurrent_tasks - backendStatus.active_tasks) || 3,
-            system_status: backendStatus.system_status || 'ready',
-            board_id: backendStatus.board_id
-          });
-          setApiError(false);
-          
-          // 不再需要单独获取任务详情，因为后端已经在concurrent_status中提供了
-          setTaskDetails({});
-        } else {
-          console.error('❌ 状态栏API错误:', response.status, response.statusText);
-          setApiError(true);
-        }
-      } catch (error) {
-        console.error('❌ 状态栏获取失败:', error);
-        setApiError(true);
-      }
-    };
-
-    // 初始获取
-    fetchTaskStatus();
-    
-    // 定期轮询（每1秒，提高响应性）
-    const interval = setInterval(fetchTaskStatus, 1000);
-    
-    return () => clearInterval(interval);
+    // 组件已禁用，不再轮询
+    return;
   }, [boardId]);
 
   // 获取任务类型的友好名称
