@@ -4,6 +4,7 @@ import { FileSearchOutlined, FileImageOutlined, InfoCircleOutlined, SyncOutlined
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import MarkdownMathRenderer from './MarkdownMathRenderer';
+import AnnotationStyleSelector from './AnnotationStyleSelector';
 import './NoteWindow.css';
 
 const { TextArea } = Input;
@@ -17,7 +18,13 @@ const NoteWindow = ({
   source = 'text',
   onForceVisionAnnotate,
   onImprove,
-  onChange
+  onChange,
+  onGenerate,
+  // 分段生成相关props
+  segmentedNoteStatus = null,
+  onContinueGenerate = null,
+  // 新增boardId prop用于风格选择器
+  boardId = null
 }) => {
   console.log('🎨 [DEBUG] NoteWindow 组件渲染:', {
     type,
@@ -73,6 +80,7 @@ const NoteWindow = ({
   const [rawTextVisible, setRawTextVisible] = useState(false);
   const [rawText, setRawText] = useState('');
   const [loadingRawText, setLoadingRawText] = useState(false);
+  const [autoSaveVisible, setAutoSaveVisible] = useState(false);
 
   console.log('🎯 [DEBUG] NoteWindow 状态快照:', {
     displayContentLength: displayContent?.length || 0,
@@ -452,6 +460,17 @@ const NoteWindow = ({
       data-filename={filename}
       data-page={pageNumber}
     >
+      {/* 注释风格选择器 - 只在注释窗口显示 */}
+      {type === 'annotation' && boardId && (
+        <AnnotationStyleSelector
+          boardId={boardId}
+          onStyleChange={(style, customPrompt) => {
+            message.success(`注释风格已切换为: ${style === 'keywords' ? '关键词解释' : style === 'translation' ? '文本翻译' : style === 'detailed' ? '详细注释' : '自定义风格'}`);
+            console.log('注释风格已更改:', { style, customPrompt });
+          }}
+        />
+      )}
+      
       <div className="note-editor-header">
         {source && (
           <div className="note-source">
@@ -470,6 +489,22 @@ const NoteWindow = ({
               {type === 'annotation' ? '改进注释' : '改进笔记'}
             </Button>
           )}
+          
+          {/* 分段生成 - 继续生成按钮 */}
+          {type === 'note' && segmentedNoteStatus && segmentedNoteStatus.hasMore && onContinueGenerate && (
+            <Button 
+              onClick={onContinueGenerate}
+              size="small"
+              type="primary"
+              loading={loading}
+              disabled={loading}
+              style={{ marginLeft: 8 }}
+              title={`继续生成第${segmentedNoteStatus.currentStartPage}页及后续内容`}
+            >
+              继续生成 ({segmentedNoteStatus.currentStartPage}+)
+            </Button>
+          )}
+          
           {/* 只有注释窗口且支持视觉识别时才显示视觉模型按钮 */}
           {type === 'annotation' && onForceVisionAnnotate && (
             <Button 
@@ -489,6 +524,37 @@ const NoteWindow = ({
           />
         </div>
       </div>
+      
+      {/* 分段生成状态信息 */}
+      {type === 'note' && segmentedNoteStatus && segmentedNoteStatus.isSegmented && (
+        <div className="segmented-note-status" style={{
+          padding: '8px 16px',
+          backgroundColor: '#f0f9ff',
+          borderLeft: '3px solid #1890ff',
+          margin: '8px 16px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          color: '#666'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>
+              📝 分段笔记模式 | 当前已生成: {segmentedNoteStatus.currentRange || '第1-40页'} 
+              {segmentedNoteStatus.totalPages > 0 && ` / 共${segmentedNoteStatus.totalPages}页`}
+            </span>
+            {segmentedNoteStatus.hasMore && (
+              <span style={{ color: '#1890ff', fontWeight: 'bold' }}>
+                还有更多内容可生成
+              </span>
+            )}
+            {!segmentedNoteStatus.hasMore && (
+              <span style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                ✅ 已完整生成
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      
       <div className="note-content">
         {loading ? (
           <div className="note-loading">正在生成内容，请稍候...</div>

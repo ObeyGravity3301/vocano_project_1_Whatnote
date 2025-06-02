@@ -3,13 +3,13 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 console.log('正在启动React应用...');
-console.log('设置代理配置: http://localhost:8000');
+console.log('设置代理配置: http://127.0.0.1:8000');
 
 // 设置环境变量
 process.env.PORT = 3000;
 process.env.DANGEROUSLY_DISABLE_HOST_CHECK = 'true';
 process.env.BROWSER = 'none';
-process.env.REACT_APP_BACKEND_URL = 'http://localhost:8000';
+process.env.REACT_APP_BACKEND_URL = 'http://127.0.0.1:8000';
 process.env.WDS_SOCKET_HOST = 'localhost';
 
 // 告知用户使用setupProxy.js配置

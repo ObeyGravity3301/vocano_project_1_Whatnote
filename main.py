@@ -3,7 +3,7 @@ import shutil
 import logging
 import json
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, WebSocket, Query, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any
 import fitz  # PyMuPDF
@@ -22,6 +22,8 @@ from board_manager import board_manager  # 导入展板管理器
 from intelligent_expert import IntelligentExpert
 # 导入简化的专家系统
 from simple_expert import simple_expert_manager
+# 导入任务事件管理器
+from task_event_manager import task_event_manager
 from fastapi.staticfiles import StaticFiles
 import asyncio
 import uvicorn
@@ -36,6 +38,15 @@ from fastapi import WebSocketDisconnect
 from openai import OpenAI
 import requests
 import random
+from datetime import datetime, timezone
+import dotenv
+import uvicorn
+import time
+import asyncio
+import json
+import secrets
+from contextlib import asynccontextmanager
+from starlette.responses import Response
 
 # 配置日志
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format=LOG_FORMAT)
@@ -72,7 +83,7 @@ async def health_check():
     """健康检查端点，用于启动脚本检测服务状态"""
     return {
         "status": "healthy",
-        "timestamp": datetime.datetime.now().isoformat(),
+        "timestamp": datetime.now().isoformat(),
         "message": "WhatNote服务运行正常"
     }
 
@@ -2115,7 +2126,7 @@ async def get_concurrent_status(board_id: str):
             "concurrent_status": status,
             "board_id": board_id,
             "response_time": response_time,
-            "timestamp": datetime.datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         error_time = time.time() - timestamp_start
@@ -2182,8 +2193,11 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
     
     try:
         board_id = request_data.get('board_id')
-        task_type = request_data.get('task_type')
         task_info = request_data.get('task_info', {})
+        
+        # 从task_info中获取任务类型和参数
+        task_type = task_info.get('type')
+        task_params = task_info.get('params', {})
         
         if not board_id:
             logger.error(f"❌ [TASK-SUBMIT] 展板ID不能为空")
@@ -2193,13 +2207,13 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
             )
             
         if not task_type:
-            logger.error(f"❌ [TASK-SUBMIT] 任务类型不能为空")
+            logger.error(f"❌ [TASK-SUBMIT] 任务类型不能为空，收到的task_info: {task_info}")
             return JSONResponse(
                 status_code=400,
                 content={"detail": "任务类型不能为空"}
             )
         
-        logger.info(f"📋 [TASK-SUBMIT] 提交任务: 展板={board_id}, 类型={task_type}")
+        logger.info(f"📋 [TASK-SUBMIT] 提交任务: 展板={board_id}, 类型={task_type}, 参数={list(task_params.keys())}")
         
         # 获取专家实例
         expert_start_time = time.time()
@@ -2213,13 +2227,28 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
         
         if task_type == 'generate_board_note':
             # 展板笔记生成任务
-            task_id = await expert.submit_task("generate_board_note", task_info)
+            task_id = await expert.submit_task("generate_board_note", task_params)
         elif task_type == 'improve_board_note':
             # 展板笔记改进任务
-            task_id = await expert.submit_task("improve_board_note", task_info)
-        elif task_type in ['generate_annotation', 'improve_annotation', 'generate_note', 'ask_question']:
-            # 其他已存在的任务类型
-            task_id = await expert.submit_task(task_type, task_info)
+            task_id = await expert.submit_task("improve_board_note", task_params)
+        elif task_type == 'generate_annotation':
+            # 注释生成任务
+            task_id = await expert.submit_task("annotation", task_params)
+        elif task_type == 'improve_annotation':
+            # 注释改进任务
+            task_id = await expert.submit_task("improve_annotation", task_params)
+        elif task_type == 'vision_annotation':
+            # 视觉识别注释任务
+            task_id = await expert.submit_task("vision_annotation", task_params)
+        elif task_type == 'generate_note':
+            # 笔记生成任务
+            task_id = await expert.submit_task("generate_note", task_params)
+        elif task_type == 'ask_question':
+            # 问答任务
+            task_id = await expert.submit_task("answer_question", task_params)
+        elif task_type == 'generate_segmented_note':
+            # 分段笔记生成任务
+            task_id = await expert.submit_task("generate_segmented_note", task_params)
         else:
             logger.error(f"❌ [TASK-SUBMIT] 不支持的任务类型: {task_type}")
             return JSONResponse(
@@ -2260,7 +2289,441 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
             content={"detail": f"任务提交失败: {str(e)}"}
         )
 
+# 添加安全的PDF删除API - 引用计数机制防止数据冲突
+@app.delete('/api/pdf/{pdf_filename}')
+async def delete_pdf_file(pdf_filename: str, board_id: str = Query(None)):
+    """
+    安全删除PDF文件，支持引用计数机制
+    - 如果指定board_id，只删除该展板的引用
+    - 如果没有指定board_id，删除所有引用  
+    - 只有当没有任何展板引用时，才物理删除文件
+    """
+    logger.info(f"请求删除PDF文件: {pdf_filename}, 展板: {board_id}")
+    
+    try:
+        from board_logger import BoardLogger
+        import os
+        
+        # 1. 检查PDF文件在所有展板中的引用情况
+        app_state = AppState()
+        pdf_references = []
+        
+        # 遍历所有展板，查找对此PDF的引用
+        board_logger = BoardLogger()
+        
+        # 从course_folders中查找所有展板
+        for folder in app_state.course_folders:
+            for file in folder.get('files', []):
+                if not file.get('name', '').endswith('.pdf'):
+                    # 这是一个展板文件，检查其PDF引用
+                    board_log = board_logger.load_log(file.get('id'))
+                    if board_log:
+                        for pdf in board_log.get('pdfs', []):
+                            if pdf.get('filename') == pdf_filename or pdf.get('server_filename') == pdf_filename:
+                                pdf_references.append({
+                                    'board_id': file.get('id'),
+                                    'board_name': file.get('name'),
+                                    'pdf_info': pdf
+                                })
+        
+        logger.info(f"PDF文件 {pdf_filename} 被 {len(pdf_references)} 个展板引用")
+        
+        # 2. 如果指定了board_id，只删除该展板的引用
+        remaining_references = len(pdf_references)
+        if board_id:
+            # 从指定展板的日志中删除PDF引用
+            board_log = board_logger.load_log(board_id)
+            if board_log:
+                original_count = len(board_log.get('pdfs', []))
+                board_log['pdfs'] = [pdf for pdf in board_log.get('pdfs', []) 
+                                   if pdf.get('filename') != pdf_filename and pdf.get('server_filename') != pdf_filename]
+                new_count = len(board_log['pdfs'])
+                
+                if original_count > new_count:
+                    board_logger.save_log(board_id, board_log)
+                    board_logger.add_operation(board_id, "pdf_removed", {"filename": pdf_filename})
+                    logger.info(f"已从展板 {board_id} 中移除PDF引用: {pdf_filename}")
+                    
+                    # 更新引用计数
+                    remaining_references = len(pdf_references) - 1
+                else:
+                    return {"status": "error", "message": f"在展板 {board_id} 中未找到PDF文件 {pdf_filename}"}
+            else:
+                return {"status": "error", "message": f"展板 {board_id} 不存在"}
+        else:
+            # 如果没有指定board_id，删除所有引用
+            remaining_references = 0
+            for ref in pdf_references:
+                board_log = board_logger.load_log(ref['board_id'])
+                if board_log:
+                    board_log['pdfs'] = [pdf for pdf in board_log.get('pdfs', []) 
+                                       if pdf.get('filename') != pdf_filename and pdf.get('server_filename') != pdf_filename]
+                    board_logger.save_log(ref['board_id'], board_log)
+                    board_logger.add_operation(ref['board_id'], "pdf_removed", {"filename": pdf_filename})
+            
+            logger.info(f"已从所有展板中移除PDF引用: {pdf_filename}")
+        
+        # 3. 如果没有剩余引用，物理删除文件
+        files_deleted = []
+        if remaining_references == 0:
+            # 删除主PDF文件
+            pdf_paths = [
+                os.path.join("uploads", pdf_filename),
+                os.path.join("materials", pdf_filename)
+            ]
+            
+            for pdf_path in pdf_paths:
+                if os.path.exists(pdf_path):
+                    try:
+                        os.remove(pdf_path)
+                        files_deleted.append(pdf_path)
+                        logger.info(f"已删除PDF文件: {pdf_path}")
+                    except Exception as e:
+                        logger.error(f"删除PDF文件失败 {pdf_path}: {e}")
+            
+            # 删除相关的页面文本文件 - 使用更安全的匹配策略
+            pages_dir = "pages"
+            if os.path.exists(pages_dir):
+                # 更安全的文件名匹配，避免误删
+                base_name = pdf_filename.replace('.pdf', '')
+                page_files = []
+                
+                for f in os.listdir(pages_dir):
+                    # 严格匹配：必须是 "filename_page_数字.txt" 格式
+                    if (f.startswith(f"{base_name}_page_") and 
+                        f.endswith('.txt') and 
+                        '_page_' in f):
+                        # 额外验证：确保page后面跟的是数字
+                        try:
+                            page_part = f.replace(f"{base_name}_page_", "").replace('.txt', '')
+                            int(page_part)  # 验证是数字
+                            page_files.append(f)
+                        except ValueError:
+                            # 如果不是数字，跳过
+                            continue
+                
+                for page_file in page_files:
+                    page_path = os.path.join(pages_dir, page_file)
+                    try:
+                        os.remove(page_path)
+                        files_deleted.append(page_path)
+                        logger.info(f"已删除页面文件: {page_path}")
+                    except Exception as e:
+                        logger.error(f"删除页面文件失败 {page_path}: {e}")
+        
+        # 4. 返回删除结果
+        result = {
+            "status": "success",
+            "pdf_filename": pdf_filename,
+            "board_id": board_id,
+            "references_before": len(pdf_references),
+            "references_after": remaining_references,
+            "files_deleted": files_deleted,
+            "physical_deletion": remaining_references == 0
+        }
+        
+        if remaining_references == 0:
+            result["message"] = f"PDF文件 {pdf_filename} 已完全删除（包括所有相关文件）"
+        else:
+            result["message"] = f"已从展板中移除PDF引用，文件仍被 {remaining_references} 个展板使用"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"删除PDF文件失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
+
+# 添加获取PDF引用信息的API
+@app.get('/api/pdf/{pdf_filename}/references')
+async def get_pdf_references(pdf_filename: str):
+    """获取PDF文件的引用信息，用于删除前的安全检查"""
+    try:
+        from board_logger import BoardLogger
+        
+        app_state = AppState()
+        board_logger = BoardLogger()
+        references = []
+        
+        # 遍历所有展板，查找对此PDF的引用
+        for folder in app_state.course_folders:
+            for file in folder.get('files', []):
+                if not file.get('name', '').endswith('.pdf'):
+                    # 这是一个展板文件，检查其PDF引用
+                    board_log = board_logger.load_log(file.get('id'))
+                    if board_log:
+                        for pdf in board_log.get('pdfs', []):
+                            if pdf.get('filename') == pdf_filename or pdf.get('server_filename') == pdf_filename:
+                                references.append({
+                                    'board_id': file.get('id'),
+                                    'board_name': file.get('name'),
+                                    'folder_name': folder.get('name'),
+                                    'pdf_info': {
+                                        'filename': pdf.get('filename'),
+                                        'added_at': pdf.get('added_at'),
+                                        'pages': pdf.get('pages', 0)
+                                    }
+                                })
+        
+        return {
+            "status": "success",
+            "pdf_filename": pdf_filename,
+            "reference_count": len(references),
+            "references": references
+        }
+        
+    except Exception as e:
+        logger.error(f"获取PDF引用信息失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"获取引用信息失败: {str(e)}")
+
 # 启动应用
+if __name__ == "__main__":
+    # 加载环境变量
+    dotenv.load_dotenv('.env')
+    
+    # 打印欢迎信息
+    print("\n=== WhatNote 服务已启动 ===")
+    print(f"API密钥配置: {'已配置' if bool(os.getenv('QWEN_API_KEY')) else '未配置'}")
+    print(f"视觉API配置: {'已配置' if bool(os.getenv('QWEN_VL_API_KEY')) else '未配置'}")
+    print("=======================\n")
+    
+    # 应用启动时同步一次文件结构
+    sync_app_state_to_butler()
+    
+    # 启动服务
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)  
+
+# 在 @app.post('/api/expert/dynamic/generate-pdf-note') 后添加分段生成笔记的API
+
+@app.post('/api/expert/dynamic/generate-segmented-note')
+async def submit_generate_segmented_note_task(request_data: dict = Body(...)):
+    """提交分段生成PDF笔记任务"""
+    try:
+        board_id = request_data.get("board_id")
+        filename = request_data.get("filename")
+        start_page = request_data.get("start_page", 1)
+        page_count = request_data.get("page_count", 40)
+        existing_note = request_data.get("existing_note", "")
+        
+        if not board_id or not filename:
+            raise HTTPException(status_code=400, detail="缺少必要参数 board_id 或 filename")
+        
+        logger.info(f"提交分段生成PDF笔记任务: {filename}, 起始页: {start_page}, 页数: {page_count}")
+        
+        # 获取简化专家系统实例
+        expert = simple_expert_manager.get_expert(board_id)
+        
+        # 构建任务参数
+        task_params = {
+            "filename": filename,
+            "start_page": start_page,
+            "page_count": page_count,
+            "existing_note": existing_note
+        }
+        
+        # 提交任务 - 使用正确的参数格式
+        task_id = await expert.submit_task("generate_segmented_note", task_params)
+        
+        return {
+            "task_id": task_id,
+            "status": "submitted",
+            "filename": filename,
+            "start_page": start_page,
+            "page_count": page_count,
+            "message": f"分段笔记生成任务已提交，任务ID: {task_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"提交分段生成PDF笔记任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
+
+@app.post('/api/expert/dynamic/continue-segmented-note')
+async def submit_continue_segmented_note_task(request_data: dict = Body(...)):
+    """提交继续生成PDF笔记任务"""
+    try:
+        board_id = request_data.get("board_id")
+        filename = request_data.get("filename")
+        current_note = request_data.get("current_note", "")
+        next_start_page = request_data.get("next_start_page")
+        page_count = request_data.get("page_count", 40)
+        
+        if not board_id or not filename or not next_start_page:
+            raise HTTPException(status_code=400, detail="缺少必要参数")
+        
+        logger.info(f"提交继续生成PDF笔记任务: {filename}, 起始页: {next_start_page}, 页数: {page_count}")
+        
+        # 获取简化专家系统实例
+        expert = simple_expert_manager.get_expert(board_id)
+        
+        # 构建任务参数
+        task_params = {
+            "filename": filename,
+            "start_page": next_start_page,
+            "page_count": page_count,
+            "existing_note": current_note
+        }
+        
+        # 提交任务 - 使用正确的参数格式
+        task_id = await expert.submit_task("generate_segmented_note", task_params)
+        
+        return {
+            "task_id": task_id,
+            "status": "submitted",
+            "filename": filename,
+            "start_page": next_start_page,
+            "page_count": page_count,
+            "message": f"继续生成笔记任务已提交，任务ID: {task_id}"
+        }
+        
+    except Exception as e:
+        logger.error(f"提交继续生成PDF笔记任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"提交任务失败: {str(e)}")
+
+# 新增SSE端点用于实时任务状态推送
+@app.get('/api/expert/dynamic/task-events/{board_id}')
+async def task_events_stream(board_id: str):
+    """
+    SSE端点，实时推送任务状态变化
+    """
+    logger.info(f"📻 [SSE] 客户端连接任务事件流: {board_id}")
+    
+    class TaskEventSubscriber:
+        def __init__(self):
+            self.connected = True
+            self.queue = asyncio.Queue(maxsize=100)
+        
+        async def send_event(self, event_data: Dict[str, Any]):
+            """发送事件到客户端"""
+            if self.connected:
+                try:
+                    await self.queue.put(event_data)
+                except asyncio.QueueFull:
+                    logger.warning(f"📻 [SSE] 事件队列已满，丢弃事件: {board_id}")
+        
+        async def generate_events(self):
+            """生成SSE事件流"""
+            try:
+                # 立即发送当前任务状态
+                current_tasks = task_event_manager.get_board_tasks(board_id)
+                initial_event = {
+                    "type": "task_list_update",
+                    "board_id": board_id,
+                    "tasks": current_tasks,
+                    "timestamp": datetime.now().isoformat()
+                }
+                yield f"data: {json.dumps(initial_event, ensure_ascii=False)}\n\n"
+                
+                # 持续推送事件
+                while self.connected:
+                    try:
+                        # 等待事件，超时检查连接状态
+                        event_data = await asyncio.wait_for(self.queue.get(), timeout=30.0)
+                        event_json = json.dumps(event_data, ensure_ascii=False)
+                        yield f"data: {event_json}\n\n"
+                    except asyncio.TimeoutError:
+                        # 发送心跳包
+                        heartbeat = {
+                            "type": "heartbeat",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
+                    except Exception as e:
+                        logger.error(f"📻 [SSE] 事件生成错误: {str(e)}")
+                        break
+                        
+            except Exception as e:
+                logger.error(f"📻 [SSE] 事件流异常: {str(e)}")
+            finally:
+                self.connected = False
+                logger.info(f"📻 [SSE] 客户端断开连接: {board_id}")
+    
+    # 创建订阅者
+    subscriber = TaskEventSubscriber()
+    
+    # 注册到事件管理器
+    task_event_manager.subscribe(board_id, subscriber)
+    
+    try:
+        # 返回SSE响应
+        response = StreamingResponse(
+            subscriber.generate_events(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control"
+            }
+        )
+        return response
+    finally:
+        # 清理订阅
+        subscriber.connected = False
+        task_event_manager.unsubscribe(board_id, subscriber)
+
+@app.post('/api/boards/{board_id}/annotation-style')
+async def set_board_annotation_style(board_id: str, request_data: dict = Body(...)):
+    """设置展板的注释风格"""
+    try:
+        style = request_data.get('style', 'detailed')
+        custom_prompt = request_data.get('custom_prompt', '')
+        
+        # 验证风格类型
+        valid_styles = ['keywords', 'translation', 'detailed', 'custom']
+        if style not in valid_styles:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"无效的注释风格，支持的风格: {', '.join(valid_styles)}"}
+            )
+        
+        # 获取展板的专家实例并设置风格
+        expert = simple_expert_manager.get_expert(board_id)
+        expert.set_annotation_style(style, custom_prompt)
+        
+        logger.info(f"设置展板 {board_id} 注释风格: {style}")
+        
+        return {
+            "status": "success",
+            "board_id": board_id,
+            "annotation_style": style,
+            "custom_prompt": custom_prompt if style == 'custom' else None,
+            "message": f"注释风格已设置为: {style}"
+        }
+        
+    except Exception as e:
+        logger.error(f"设置注释风格失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"设置注释风格失败: {str(e)}"}
+        )
+
+@app.get('/api/boards/{board_id}/annotation-style')
+async def get_board_annotation_style(board_id: str):
+    """获取展板的当前注释风格"""
+    try:
+        # 获取展板的专家实例
+        expert = simple_expert_manager.get_expert(board_id)
+        style_info = expert.get_annotation_style()
+        
+        return {
+            "status": "success",
+            "board_id": board_id,
+            "annotation_style": style_info["style"],
+            "custom_prompt": style_info["custom_prompt"],
+            "available_styles": {
+                "keywords": "关键词解释，中英对照",
+                "translation": "单纯翻译文本内容", 
+                "detailed": "详细学术注释",
+                "custom": "自定义提示词"
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"获取注释风格失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"获取注释风格失败: {str(e)}"}
+        )
+
 if __name__ == "__main__":
     # 加载环境变量
     dotenv.load_dotenv('.env')

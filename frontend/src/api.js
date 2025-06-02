@@ -189,57 +189,168 @@ const api = {
       const pollInterval = 2000; // 轮询间隔2秒
       let pollCount = 0;
 
-      // 轮询等待结果
-      return new Promise((resolve, reject) => {
-        const poll = () => {
-          pollCount++;
-          console.log(`📊 PDF笔记任务轮询 ${pollCount}/${maxPolls}, 任务ID: ${task_id}`);
-          
-          apiRequest(`/expert/dynamic/result/${task_id}`, {
-            method: 'GET'
-          }).then(result => {
-            if (result && result.status === 'completed') {
-              console.log('✅ PDF笔记生成完成:', result);
-              resolve({
-                note: result.result || result.data || '无笔记内容', // 优先使用result字段
-                session_id: sessionId
-              });
-            } else if (result && result.status === 'failed') {
-              console.error('❌ PDF笔记任务失败:', result);
-              reject(new Error(result.error || '任务执行失败'));
-            } else if (result && result.status === 'running') {
-              // 仍在进行中
-              console.log(`⏳ PDF笔记任务进行中... (${pollCount}/${maxPolls})`);
-              if (pollCount < maxPolls) {
-                setTimeout(poll, pollInterval);
-              } else {
-                reject(new Error('PDF笔记生成任务超时'));
-              }
+      const pollResult = () => {
+        return apiRequest(`/expert/dynamic/result/${task_id}`)
+          .then(pollResponse => {
+            console.log(`📊 轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+            
+            if (pollResponse.status === 'completed') {
+              console.log('✅ PDF笔记生成完成');
+              return { result: pollResponse.result };
+            } else if (pollResponse.status === 'failed') {
+              throw new Error(pollResponse.error || '笔记生成失败');
             } else {
-              // 未知状态，可能任务不存在或API错误
-              console.warn('📋 任务状态未知:', result);
-              if (pollCount < maxPolls) {
-                setTimeout(poll, pollInterval);
-              } else {
-                reject(new Error('PDF笔记生成任务超时或失败'));
+              // 仍在处理中
+              pollCount++;
+              if (pollCount >= maxPolls) {
+                throw new Error('笔记生成超时');
               }
-            }
-          }).catch(error => {
-            console.error('❌ PDF笔记轮询错误:', error);
-            if (pollCount < maxPolls) {
-              setTimeout(poll, pollInterval);
-            } else {
-              reject(error);
+              
+              console.log('⏳ 继续等待笔记生成...');
+              return new Promise(resolve => 
+                setTimeout(() => resolve(pollResult()), pollInterval)
+              );
             }
           });
-        };
-        
-        // 立即开始第一次轮询，不延迟
-        poll();
-      });
-    }).catch(error => {
-      console.error('❌ PDF笔记并发API请求错误:', error);
-      throw error;
+      };
+
+      return pollResult();
+    });
+  },
+  
+  // 分段生成PDF笔记
+  generateSegmentedNote: (filename, startPage = 1, pageCount = 40, existingNote = '', boardId = null) => {
+    console.log(`🚀 分段生成PDF笔记: ${filename}, 起始页: ${startPage}, 页数: ${pageCount}`);
+    
+    if (!boardId) {
+      console.error('❌ 分段生成API需要boardId');
+      throw new Error('分段生成API需要boardId');
+    }
+
+    const body = {
+      board_id: boardId,
+      filename: filename,
+      start_page: startPage,
+      page_count: pageCount,
+      existing_note: existingNote
+    };
+
+    console.log('🚀 提交分段笔记生成任务:', body);
+
+    // 提交任务
+    return apiRequest('/expert/dynamic/generate-segmented-note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(response => {
+      console.log('✅ 分段笔记任务已提交:', response);
+      
+      const task_id = response.task_id;
+      const maxPolls = 60; // 最多轮询60次 (约2分钟)
+      const pollInterval = 2000; // 轮询间隔2秒
+      let pollCount = 0;
+
+      const pollResult = () => {
+        return apiRequest(`/expert/dynamic/result/${task_id}`)
+          .then(pollResponse => {
+            console.log(`📊 分段笔记轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+            
+            if (pollResponse.status === 'completed') {
+              console.log('✅ 分段笔记生成完成');
+              // 解析JSON结果
+              try {
+                const result = JSON.parse(pollResponse.result);
+                return { result: result };
+              } catch (e) {
+                console.error('解析分段笔记结果失败:', e);
+                return { result: { note: pollResponse.result, error: true } };
+              }
+            } else if (pollResponse.status === 'failed') {
+              throw new Error(pollResponse.error || '分段笔记生成失败');
+            } else {
+              // 仍在处理中
+              pollCount++;
+              if (pollCount >= maxPolls) {
+                throw new Error('分段笔记生成超时');
+              }
+              
+              console.log('⏳ 继续等待分段笔记生成...');
+              return new Promise(resolve => 
+                setTimeout(() => resolve(pollResult()), pollInterval)
+              );
+            }
+          });
+      };
+
+      return pollResult();
+    });
+  },
+  
+  // 继续生成PDF笔记
+  continueSegmentedNote: (filename, currentNote, nextStartPage, pageCount = 40, boardId = null) => {
+    console.log(`🚀 继续生成PDF笔记: ${filename}, 起始页: ${nextStartPage}`);
+    
+    if (!boardId) {
+      console.error('❌ 继续生成API需要boardId');
+      throw new Error('继续生成API需要boardId');
+    }
+
+    const body = {
+      board_id: boardId,
+      filename: filename,
+      current_note: currentNote,
+      next_start_page: nextStartPage,
+      page_count: pageCount
+    };
+
+    console.log('🚀 提交继续生成笔记任务:', body);
+
+    // 提交任务
+    return apiRequest('/expert/dynamic/continue-segmented-note', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(response => {
+      console.log('✅ 继续生成笔记任务已提交:', response);
+      
+      const task_id = response.task_id;
+      const maxPolls = 60; // 最多轮询60次 (约2分钟)
+      const pollInterval = 2000; // 轮询间隔2秒
+      let pollCount = 0;
+
+      const pollResult = () => {
+        return apiRequest(`/expert/dynamic/result/${task_id}`)
+          .then(pollResponse => {
+            console.log(`📊 继续生成笔记轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+            
+            if (pollResponse.status === 'completed') {
+              console.log('✅ 继续生成笔记完成');
+              // 解析JSON结果
+              try {
+                const result = JSON.parse(pollResponse.result);
+                return { result: result };
+              } catch (e) {
+                console.error('解析继续生成笔记结果失败:', e);
+                return { result: { note: pollResponse.result, error: true } };
+              }
+            } else if (pollResponse.status === 'failed') {
+              throw new Error(pollResponse.error || '继续生成笔记失败');
+            } else {
+              // 仍在处理中
+              pollCount++;
+              if (pollCount >= maxPolls) {
+                throw new Error('继续生成笔记超时');
+              }
+              
+              console.log('⏳ 继续等待笔记生成...');
+              return new Promise(resolve => 
+                setTimeout(() => resolve(pollResult()), pollInterval)
+              );
+            }
+          });
+      };
+
+      return pollResult();
     });
   },
   
@@ -594,7 +705,48 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ new_name: newName })
     });
-  }
+  },
+
+  // 获取PDF引用信息
+  async getPdfReferences(filename) {
+    try {
+      const response = await apiRequest(`/api/pdf/${encodeURIComponent(filename)}/references`);
+      return response;
+    } catch (error) {
+      console.error('获取PDF引用失败:', error);
+      throw error;
+    }
+  },
+
+  // 获取展板并发任务状态
+  async getConcurrentStatus(boardId) {
+    try {
+      console.log(`🔍 获取展板 ${boardId} 的并发状态`);
+      const response = await apiRequest(`/api/expert/dynamic/concurrent-status/${boardId}`);
+      console.log(`📊 并发状态响应:`, response);
+      return response;
+    } catch (error) {
+      console.error('获取并发状态失败:', error);
+      return { active_task_details: [] }; // 返回空的任务列表
+    }
+  },
+
+  // 删除PDF文件
+  async deletePdfFile(filename, boardId = null) {
+    const url = new URL(`${API_BASE_URL}/api/pdf/${encodeURIComponent(filename)}`);
+    if (boardId) {
+      url.searchParams.append('board_id', boardId);
+    }
+    
+    const response = await fetch(url, {
+      method: 'DELETE',
+    });
+    
+    if (!response.ok) {
+      throw new Error(`删除PDF文件失败: ${response.status}`);
+    }
+    return response.json();
+  },
 
 };
 

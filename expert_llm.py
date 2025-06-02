@@ -2069,6 +2069,167 @@ class ExpertLLM:
             del self.active_tasks[task_id]
             logger.info(f"超时任务 {task_id} 已从活跃列表中移除")
 
+    # 在generate_note方法后添加新的分段生成方法
+
+    def generate_segmented_note(self, filename, pages_text, start_page=1, page_count=40, existing_note=""):
+        """
+        分段生成PDF笔记
+        
+        Args:
+            filename: PDF文件名
+            pages_text: 所有页面的文本内容列表
+            start_page: 开始页码（从1开始）
+            page_count: 每次生成的页数（默认40页）
+            existing_note: 已有的笔记内容
+            
+        Returns:
+            dict: 包含生成的笔记内容、下一段开始页码、是否还有更多内容等信息
+        """
+        try:
+            if len(pages_text) == 0:
+                return {
+                    "note": "**错误：未找到任何页面内容。** 请重新上传PDF文件或确保文件内容可提取。",
+                    "next_start_page": None,
+                    "has_more": False,
+                    "total_pages": 0,
+                    "current_range": f"第{start_page}页"
+                }
+            
+            total_pages = len(pages_text)
+            
+            # 计算实际的结束页码
+            end_page = min(start_page + page_count - 1, total_pages)
+            
+            # 检查页码范围的有效性
+            if start_page > total_pages:
+                return {
+                    "note": f"**错误：起始页码({start_page})超出PDF总页数({total_pages})。**",
+                    "next_start_page": None,
+                    "has_more": False,
+                    "total_pages": total_pages,
+                    "current_range": f"第{start_page}页"
+                }
+            
+            # 提取指定范围的页面内容
+            pages_to_process = pages_text[start_page-1:end_page]
+            
+            # 构建内容样本
+            content = "\n\n".join([f"第{i+start_page}页:\n{text[:500]}..." for i, text in enumerate(pages_to_process)])
+            
+            # 计算是否还有更多内容
+            has_more = end_page < total_pages
+            next_start_page = end_page + 1 if has_more else None
+            
+            # 构建页面范围信息
+            current_range = f"第{start_page}页-第{end_page}页" if start_page != end_page else f"第{start_page}页"
+            
+            logger.info(f"正在为 {filename} 生成分段笔记，{current_range}，共处理 {len(pages_to_process)} 页")
+            
+            # 构建提示词
+            if existing_note:
+                # 如果有已存在的笔记，提示AI进行续写
+                prompt = f"【分段笔记续写任务】为PDF文件 {filename} 的{current_range}生成笔记，并续写到已有笔记后面。\n\n"
+                prompt += f"已有笔记内容（前面部分）:\n{existing_note[-1000:]}...\n\n"  # 只显示最后1000字符作为上下文
+                prompt += f"当前需要处理的内容（{current_range}）:\n{content}\n\n"
+                prompt += f"""请为{current_range}的内容生成笔记，要求：
+
+1. 内容要与前面的笔记保持连贯性和一致性
+2. 使用Markdown格式，突出重点和关键概念
+3. 在引用重要内容时标注页码，格式为：(第X页) 或 (第X-Y页)
+4. 不要重复前面已经总结过的内容
+5. 如果当前段落是前面内容的延续，请自然衔接
+6. 请只生成{current_range}的笔记内容，不要重复已有笔记
+
+请开始生成{current_range}的笔记："""
+            else:
+                # 第一次生成笔记
+                prompt = f"【分段笔记生成任务】为PDF文件 {filename} 的{current_range}生成笔记。\n\n"
+                prompt += f"这是PDF的第一部分内容，文件总共有 {total_pages} 页。\n\n"
+                prompt += f"当前处理内容（{current_range}）:\n{content}\n\n"
+                prompt += f"""请为{current_range}的内容生成笔记，要求：
+
+1. 使用Markdown格式，突出重点和关键概念
+2. 在引用重要内容时标注页码，格式为：(第X页) 或 (第X-Y页)  
+3. 生成结构化的内容总结
+4. 这是PDF的第一部分，请为后续内容预留良好的结构
+5. 请只基于提供的{current_range}内容生成笔记
+
+请开始生成{current_range}的笔记："""
+            
+            # 记录操作开始
+            board_logger.add_operation(
+                self.board_id,
+                "segmented_note_generation_started",
+                {
+                    "filename": filename, 
+                    "start_page": start_page, 
+                    "end_page": end_page,
+                    "has_existing_note": bool(existing_note)
+                }
+            )
+            
+            # 调用LLM生成笔记
+            note_segment = self._call_llm(prompt)
+            
+            # 检查返回的内容是否为错误信息
+            if note_segment.startswith("API调用错误:"):
+                logger.error(f"LLM调用失败，返回错误信息: {note_segment}")
+                return {
+                    "note": f"笔记生成失败: {note_segment}",
+                    "next_start_page": next_start_page,
+                    "has_more": has_more,
+                    "total_pages": total_pages,
+                    "current_range": current_range
+                }
+            
+            # 检查返回内容是否过短
+            if len(note_segment.strip()) < 50:
+                logger.warning(f"LLM返回内容过短 ({len(note_segment)}字符)，可能是不完整的响应")
+                return {
+                    "note": f"笔记生成可能不完整。请重试或检查网络连接。\n\n部分内容: {note_segment}",
+                    "next_start_page": next_start_page,
+                    "has_more": has_more,
+                    "total_pages": total_pages,
+                    "current_range": current_range
+                }
+            
+            # 在笔记开头添加范围信息
+            note_with_range = f"**{current_range}内容：**\n\n{note_segment}"
+            
+            # 记录操作完成
+            board_logger.add_operation(
+                self.board_id,
+                "segmented_note_generated",
+                {
+                    "filename": filename,
+                    "start_page": start_page,
+                    "end_page": end_page,
+                    "note_length": len(note_segment),
+                    "has_more": has_more
+                }
+            )
+            
+            return {
+                "note": note_with_range,
+                "next_start_page": next_start_page,
+                "has_more": has_more,
+                "total_pages": total_pages,
+                "current_range": current_range,
+                "pages_processed": len(pages_to_process)
+            }
+            
+        except Exception as e:
+            error_msg = f"分段生成笔记时出错: {str(e)}"
+            logger.error(error_msg)
+            
+            return {
+                "note": error_msg,
+                "next_start_page": None,
+                "has_more": False,
+                "total_pages": len(pages_text) if pages_text else 0,
+                "current_range": f"第{start_page}页"
+            }
+
 # 存储专家LLM实例的字典
 expert_llm_instances = {}
 

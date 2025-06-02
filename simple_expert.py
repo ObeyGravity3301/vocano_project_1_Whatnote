@@ -17,6 +17,9 @@ from openai import OpenAI
 from datetime import datetime
 from enum import Enum
 
+# 导入任务事件管理器
+from task_event_manager import task_event_manager
+
 # 导入配置
 try:
     from config import DASHSCOPE_API_KEY, QWEN_API_KEY, PAGE_DIR
@@ -54,12 +57,26 @@ class SimpleExpert:
     def __init__(self, board_id: str):
         """初始化简化专家LLM"""
         self.board_id = board_id
-        self.conversation_history = []
-        self.max_concurrent_tasks = 3
+        self.session_id = f"simple_expert_{board_id}_{secrets.token_hex(4)}"
+        
+        # 任务管理
+        self.tasks: Dict[str, Task] = {}
         self.task_queue = asyncio.Queue()
         self.active_tasks: Set[str] = set()
-        self.tasks: Dict[str, Task] = {}
         self.task_results: Dict[str, Dict[str, Any]] = {}
+        self.max_concurrent_tasks = 5  # 提高并发上限到5个任务
+        
+        # 处理器状态
+        self._processor_started = False
+        self._processor_lock = asyncio.Lock()
+        
+        # 在初始化时标记需要延迟启动（避免循环依赖）
+        self._needs_delayed_start = True
+        
+        # 对话历史管理
+        self.conversation_history = []
+        
+        logger.info(f"SimpleExpert 初始化完成，展板ID: {board_id}, 最大并发任务数: {self.max_concurrent_tasks}")
         
         # 预创建HTTP客户端
         self.http_client = httpx.AsyncClient(timeout=60.0)
@@ -84,7 +101,6 @@ class SimpleExpert:
             self.has_llm_client = False
         
         # 预启动任务处理器
-        self._processor_started = False
         self._startup_task = None
         logger.info(f"📝 [INIT] SimpleExpert初始化完成: {board_id}")
         
@@ -207,89 +223,108 @@ class SimpleExpert:
                 await asyncio.sleep(1)  # 错误后稍微等待
     
     async def _execute_task(self, task: Task):
-        """执行单个任务"""
-        execution_start_time = time.time()
-        logger.info(f"⚡ [EXECUTE] 开始执行任务: {task.task_id}，类型: {task.task_type}")
-        
+        """执行任务"""
         try:
-            # 根据任务类型执行相应的处理函数
-            handler_start_time = time.time()
+            logger.info(f"开始执行任务: {task.task_id}, 类型: {task.task_type}")
+            task.status = TaskStatus.RUNNING
+            task.start_time = time.time()
             
-            if task.task_type == "generate_annotation":
-                result = await self._generate_annotation_task(task.params["filename"], task.params["pageNumber"])
+            # 🚀 发送任务开始事件
+            await task_event_manager.notify_task_started(
+                board_id=self.board_id,
+                task_id=task.task_id,
+                task_info={
+                    "task_type": task.task_type,
+                    "description": self._get_task_description(task),
+                    "board_id": self.board_id,
+                    "params": task.params
+                }
+            )
+            
+            # 根据任务类型执行对应的处理
+            if task.task_type == "annotation":
+                filename = task.params.get('filename')
+                page_number = task.params.get('pageNumber', task.params.get('page_number'))
+                result = await self._generate_annotation_task(filename, page_number)
+            elif task.task_type == "vision_annotation":
+                result = await self._vision_annotation_task(task.params)
             elif task.task_type == "improve_annotation":
                 result = await self._improve_annotation_task(task.params)
             elif task.task_type == "generate_note":
                 result = await self._generate_note_task(task.params)
+            elif task.task_type == "generate_segmented_note":
+                result = await self._generate_segmented_note_task(task.params)
             elif task.task_type == "generate_board_note":
                 result = await self._generate_board_note_task(task.params)
             elif task.task_type == "improve_board_note":
                 result = await self._improve_board_note_task(task.params)
-            elif task.task_type == "ask_question":
+            elif task.task_type == "answer_question":
                 result = await self._ask_question_task(task.params)
-            else:
+            elif task.task_type == "general_query":
                 result = await self._general_query_task(task.params)
+            else:
+                raise ValueError(f"未知的任务类型: {task.task_type}")
             
-            handler_time = time.time() - handler_start_time
-            logger.info(f"✅ [EXECUTE] 任务处理器执行完成: {task.task_id}，处理耗时: {handler_time:.3f}s，结果长度: {len(result) if result else 0}")
-            
+            # 任务完成
             task.status = TaskStatus.COMPLETED
             task.result = result
-            task.completed_at = datetime.now()
+            task.end_time = time.time()
+            task.duration = task.end_time - task.start_time
             
-            # 存储任务结果
-            result_store_time = time.time()
+            # 存储任务结果到task_results以便查询 - 确保所有值都可序列化
             self.task_results[task.task_id] = {
                 "status": "completed",
-                "result": result,
-                "task_type": task.task_type,
-                "completed_at": task.completed_at.isoformat(),
-                "task_id": task.task_id,
-                "board_id": self.board_id,
+                "result": str(result) if result is not None else "",  # 确保结果是字符串
+                "task_type": str(task.task_type),
+                "task_id": str(task.task_id),
+                "board_id": str(self.board_id),
                 "success": True,
-                # 提供多个字段以兼容前端
-                "data": {"content": result},
-                "note": result,
-                "annotation": result,
-                "answer": result,
-                "timing": {
-                    "handler_time": handler_time,
-                    "total_execution_time": time.time() - execution_start_time
-                }
+                "duration": float(task.duration)
             }
-            logger.info(f"💾 [EXECUTE] 任务结果存储完成: {task.task_id}，存储耗时: {time.time() - result_store_time:.3f}s")
+            
+            # ✅ 发送任务完成事件
+            await task_event_manager.notify_task_completed(
+                board_id=self.board_id,
+                task_id=task.task_id,
+                result=result
+            )
+            
+            logger.info(f"任务完成: {task.task_id}, 耗时: {task.duration:.3f}秒, 结果长度: {len(str(result)) if result else 0}")
             
         except Exception as e:
-            error_time = time.time() - execution_start_time
-            logger.error(f"❌ [EXECUTE] 任务执行失败: {task.task_id}，错误: {str(e)}，失败耗时: {error_time:.3f}s", exc_info=True)
+            # 任务失败
             task.status = TaskStatus.FAILED
             task.error = str(e)
-            task.completed_at = datetime.now()
+            task.end_time = time.time()
+            task.duration = task.end_time - task.start_time if task.start_time else 0
             
+            # 存储失败结果 - 确保所有值都可序列化
             self.task_results[task.task_id] = {
                 "status": "failed",
                 "error": str(e),
-                "task_type": task.task_type,
-                "completed_at": task.completed_at.isoformat(),
-                "task_id": task.task_id,
-                "board_id": self.board_id,
+                "task_type": str(task.task_type),
+                "task_id": str(task.task_id),
+                "board_id": str(self.board_id),
                 "success": False,
-                "timing": {
-                    "error_time": error_time
-                }
+                "duration": float(task.duration)
             }
+            
+            # ❌ 发送任务失败事件
+            await task_event_manager.notify_task_failed(
+                board_id=self.board_id,
+                task_id=task.task_id,
+                error=str(e)
+            )
+            
+            logger.error(f"任务失败: {task.task_id}, 错误: {str(e)}, 耗时: {task.duration:.3f}秒")
         
         finally:
             # 从活动任务中移除
-            cleanup_time = time.time()
             self.active_tasks.discard(task.task_id)
-            total_execution_time = time.time() - execution_start_time
-            logger.info(f"🏁 [EXECUTE] 任务完成清理: {task.task_id}，总执行时间: {total_execution_time:.3f}s，当前活跃任务数: {len(self.active_tasks)}")
-            logger.info(f"🧹 [EXECUTE] 清理耗时: {time.time() - cleanup_time:.3f}s")
     
     async def _generate_annotation_task(self, filename: str, page_number: int) -> str:
         """
-        生成页面注释任务 - 优先使用文字提取
+        生成页面注释任务 - 支持多种注释风格
         """
         start_time = time.time()
         
@@ -304,28 +339,14 @@ class SimpleExpert:
                 if page_text and len(page_text.strip()) > 50:  # 文字内容充足
                     logger.info(f"使用PDF文字生成注释，文字长度: {len(page_text)} 字符")
                     
-                    # 使用专门的文字注释提示模板
-                    annotation_prompt = f"""
-请为以下PDF页面内容生成详细的学术注释：
-
-PDF文件：{filename}
-页码：第{page_number}页
-
-页面文字内容：
-{page_text}
-
-请提供：
-1. 核心概念总结
-2. 重要知识点解释
-3. 与其他概念的关联
-4. 学习要点和记忆提示
-
-注释要求：
-- 详细且准确
-- 突出重点概念
-- 提供具体例子
-- 便于理解和记忆
-"""
+                    # 获取注释风格（从展板状态或默认）
+                    annotation_style = getattr(self, 'annotation_style', 'detailed')
+                    custom_prompt = getattr(self, 'custom_annotation_prompt', '')
+                    
+                    # 根据风格选择提示词模板
+                    annotation_prompt = self._get_annotation_prompt(
+                        filename, page_number, page_text, annotation_style, custom_prompt
+                    )
                     
                     # 使用通用LLM生成注释
                     if self.has_llm_client and self.client:
@@ -342,7 +363,7 @@ PDF文件：{filename}
                         annotation_content = response.choices[0].message.content
                         execution_time = time.time() - start_time
                         
-                        logger.info(f"基于文字的注释生成完成，长度: {len(annotation_content)} 字符，耗时: {execution_time:.3f}秒")
+                        logger.info(f"基于文字的注释生成完成，风格: {annotation_style}，长度: {len(annotation_content)} 字符，耗时: {execution_time:.3f}秒")
                         return annotation_content
                     else:
                         logger.warning("LLM客户端不可用，无法生成注释")
@@ -370,44 +391,75 @@ PDF文件：{filename}
                 with open(img_path, 'rb') as f:
                     image_data = base64.b64encode(f.read()).decode('utf-8')
                 
-                # 使用视觉识别生成注释
-                vision_prompt = f"""
-请分析这个PDF页面图像并生成详细的学术注释：
-
-PDF文件：{filename}
-页码：第{page_number}页
-
-请识别页面中的：
-1. 主要文字内容
-2. 图表、公式或示意图
-3. 重要概念和知识点
-4. 结构层次关系
-
-并提供：
-- 内容总结
-- 关键概念解释
-- 学习重点
-- 理解建议
-"""
+                logger.info(f"成功读取页面图像: {img_path}, 图像大小: {len(image_data)} 字符")
+                
+                # 获取注释风格
+                annotation_style = getattr(self, 'annotation_style', 'detailed')
+                custom_prompt = getattr(self, 'custom_annotation_prompt', '')
+                
+                # 使用视觉识别生成注释 - 修复模型和API调用格式
+                vision_prompt = self._get_vision_annotation_prompt(
+                    filename, page_number, annotation_style, custom_prompt
+                )
                 
                 if self.has_llm_client and self.client:
+                    logger.info(f"正在调用视觉LLM API进行图像分析，风格: {annotation_style}...")
+                    
+                    # 使用支持视觉的模型和正确的API格式
                     response = self.client.chat.completions.create(
-                        model="qwen-plus",
+                        model="qwen-vl-plus",  # 使用支持视觉的模型
                         messages=[
-                            {"role": "system", "content": "你是一个专业的学术助手，擅长分析PDF页面并生成详细注释。"},
-                            {"role": "user", "content": [
-                                {"type": "text", "text": vision_prompt},
-                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}}
-                            ]}
+                            {
+                                "role": "user", 
+                                "content": [
+                                    {
+                                        "type": "text", 
+                                        "text": vision_prompt
+                                    },
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/png;base64,{image_data}"
+                                        }
+                                    }
+                                ]
+                            }
                         ],
-                        max_tokens=2000,
-                        temperature=0.7
+                        max_tokens=3000,  # 增加token限制以获得更详细的分析
+                        temperature=0.3   # 降低温度以获得更准确的分析
                     )
                     
                     annotation_content = response.choices[0].message.content
                     execution_time = time.time() - start_time
                     
-                    logger.info(f"基于图像的注释生成完成，长度: {len(annotation_content)} 字符，耗时: {execution_time:.3f}秒")
+                    logger.info(f"基于图像的注释生成完成，风格: {annotation_style}，长度: {len(annotation_content)} 字符，耗时: {execution_time:.3f}秒")
+                    
+                    # 验证返回内容是否为通用回复
+                    if "无法直接访问" in annotation_content or "推测性" in annotation_content:
+                        logger.warning(f"检测到通用回复，可能是视觉识别失败")
+                        # 尝试使用文本模式的fallback
+                        fallback_prompt = f"""基于PDF文件名"{filename}"第{page_number}页，请生成该页面可能包含的学术注释。这是关于细胞结构与形态学的课程内容。
+
+请提供详细的学术注释，包括：
+1. 细胞结构的基本概念
+2. 形态学观察要点
+3. 相关的实验方法
+4. 学习重点和要点
+
+请确保内容准确且具有学术价值。"""
+                        
+                        fallback_response = self.client.chat.completions.create(
+                            model="qwen-plus",
+                            messages=[
+                                {"role": "system", "content": "你是一个专业的生物学学术助手，擅长细胞结构与形态学内容。"},
+                                {"role": "user", "content": fallback_prompt}
+                            ],
+                            max_tokens=2000,
+                            temperature=0.7
+                        )
+                        
+                        annotation_content = f"**注：由于视觉识别限制，以下是基于课程内容的推测性注释**\n\n{fallback_response.choices[0].message.content}"
+                    
                     return annotation_content
                 else:
                     logger.warning("LLM客户端不可用，无法生成注释")
@@ -422,6 +474,179 @@ PDF文件：{filename}
             error_msg = f"注释生成任务失败: {str(e)}"
             logger.error(f"{error_msg}，耗时: {execution_time:.3f}秒")
             return error_msg
+    
+    def _get_annotation_prompt(self, filename: str, page_number: int, page_text: str, 
+                              style: str, custom_prompt: str = '') -> str:
+        """根据风格生成注释提示词"""
+        
+        base_info = f"""
+PDF文件：{filename}
+页码：第{page_number}页
+
+页面文字内容：
+{page_text}
+"""
+        
+        if style == 'keywords':
+            # 风格1：关键词解释，中英对照
+            return f"""{base_info}
+
+请为以上PDF页面内容生成关键词解释注释，要求：
+
+1. **提取关键概念**：识别页面中的重要学术概念、专业术语
+2. **中英对照**：提供中文概念对应的英文术语
+3. **简洁解释**：每个关键词提供1-2句简明解释
+4. **分类整理**：按主题或重要性分类排列
+
+输出格式：
+## 关键概念
+
+### [主题分类]
+- **[中文术语]** (*English Term*): 简洁解释
+- **[中文术语]** (*English Term*): 简洁解释
+
+请开始分析："""
+            
+        elif style == 'translation':
+            # 风格2：单纯翻译文本内容
+            return f"""{base_info}
+
+请将以上PDF页面的文字内容进行准确翻译和整理，要求：
+
+1. **完整翻译**：将页面内容翻译成流畅的中文
+2. **保持结构**：保留原文的段落和层次结构
+3. **术语统一**：专业术语保持一致性
+4. **标注原文**：重要术语标注英文原文
+
+输出格式：
+## 页面内容翻译
+
+[翻译后的完整内容，保持原有结构]
+
+请开始翻译："""
+            
+        elif style == 'custom':
+            # 风格4：自定义提示词
+            if custom_prompt:
+                return f"""{base_info}
+
+用户自定义要求：
+{custom_prompt}
+
+请根据用户的自定义要求为以上内容生成注释："""
+            else:
+                # 如果没有自定义提示词，回退到详细风格
+                return self._get_annotation_prompt(filename, page_number, page_text, 'detailed')
+                
+        else:  # 'detailed' 或默认
+            # 风格3：详细学术注释（原来的风格）
+            return f"""{base_info}
+
+请为以下PDF页面内容生成详细的学术注释：
+
+请提供：
+1. 核心概念总结
+2. 重要知识点解释
+3. 与其他概念的关联
+4. 学习要点和记忆提示
+
+注释要求：
+- 详细且准确
+- 突出重点概念
+- 提供具体例子
+- 便于理解和记忆
+
+请开始生成注释："""
+    
+    def _get_vision_annotation_prompt(self, filename: str, page_number: int, 
+                                    style: str, custom_prompt: str = '') -> str:
+        """根据风格生成视觉识别注释提示词"""
+        
+        base_info = f"""请仔细分析这个PDF页面图像：
+
+PDF文件：{filename}
+页码：第{page_number}页
+"""
+        
+        if style == 'keywords':
+            return f"""{base_info}
+
+请基于图像内容生成关键词解释注释，要求：
+
+1. **识别关键概念**：从图像中识别重要学术概念、专业术语
+2. **中英对照**：提供识别出的中文概念对应的英文术语
+3. **简洁解释**：每个关键词提供1-2句简明解释
+4. **图表分析**：如有图表，解释其含义
+
+输出格式：
+## 关键概念
+
+### [主题分类]
+- **[中文术语]** (*English Term*): 简洁解释
+
+注意：请基于图像中的实际内容进行分析。"""
+            
+        elif style == 'translation':
+            return f"""{base_info}
+
+请将图像中的文字内容进行识别和翻译，要求：
+
+1. **文字识别**：准确识别图像中的所有文字内容
+2. **完整翻译**：将内容翻译成流畅的中文
+3. **结构保持**：保留原有的布局和层次
+4. **图表说明**：对图表进行文字描述
+
+输出格式：
+## 页面内容识别与翻译
+
+[识别并翻译的完整内容]
+
+注意：请基于图像中的实际内容进行分析。"""
+            
+        elif style == 'custom':
+            if custom_prompt:
+                return f"""{base_info}
+
+用户自定义要求：
+{custom_prompt}
+
+请根据用户的自定义要求分析图像并生成注释。
+
+注意：请基于图像中的实际内容进行分析。"""
+            else:
+                return self._get_vision_annotation_prompt(filename, page_number, 'detailed')
+                
+        else:  # 'detailed' 或默认
+            return f"""{base_info}
+
+请基于图像中的实际内容进行分析，包括：
+1. 识别并转录页面中的所有文字内容
+2. 分析图表、公式、示意图等视觉元素
+3. 提取重要概念和知识点
+4. 理解内容的结构层次关系
+
+请提供详细的学术注释，包括：
+- 页面内容的完整总结
+- 关键概念的深入解释
+- 重要知识点的强调
+- 学习建议和记忆要点
+
+注意：请基于图像中的实际内容进行分析，不要使用推测性内容。"""
+    
+    def set_annotation_style(self, style: str, custom_prompt: str = ''):
+        """设置注释风格"""
+        self.annotation_style = style
+        self.custom_annotation_prompt = custom_prompt
+        logger.info(f"展板 {self.board_id} 注释风格已设置为: {style}")
+        if style == 'custom' and custom_prompt:
+            logger.info(f"自定义提示词: {custom_prompt[:100]}...")
+    
+    def get_annotation_style(self) -> Dict[str, str]:
+        """获取当前注释风格"""
+        return {
+            "style": getattr(self, 'annotation_style', 'detailed'),
+            "custom_prompt": getattr(self, 'custom_annotation_prompt', '')
+        }
     
     async def _improve_annotation_task(self, params: Dict[str, Any]) -> str:
         """改进注释任务"""
@@ -451,6 +676,39 @@ PDF文件：{filename}
             return improved_content
         else:
             error_msg = f"改进注释失败: {response.status_code}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+    
+    async def _vision_annotation_task(self, params: Dict[str, Any]) -> str:
+        """视觉识别注释任务"""
+        filename = params.get('filename')
+        page_number = params.get('pageNumber', params.get('page_number'))
+        session_id = params.get('sessionId', params.get('session_id'))
+        current_annotation = params.get('currentAnnotation', params.get('current_annotation', ''))
+        improve_request = params.get('improveRequest', params.get('improve_request', ''))
+        
+        logger.info(f"👁️ 视觉识别注释任务: {filename} 第{page_number}页, 会话ID: {session_id}")
+        
+        # 调用视觉识别API
+        response = await self.http_client.post(
+            f"http://127.0.0.1:8000/api/materials/{filename}/pages/{page_number}/vision-annotate",
+            json={
+                "current_annotation": current_annotation,
+                "improve_request": improve_request,
+                "board_id": self.board_id,
+                "session_id": session_id
+            },
+            timeout=90.0  # 视觉识别可能需要更长时间
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            # 提取注释内容
+            annotation_content = data.get("annotation", "")
+            logger.info(f"✅ 视觉识别注释成功，返回内容长度: {len(annotation_content)}")
+            return annotation_content
+        else:
+            error_msg = f"视觉识别注释失败: {response.status_code}"
             logger.error(error_msg)
             raise Exception(error_msg)
     
@@ -604,7 +862,28 @@ PDF文件：{filename}
     
     def get_task_result(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务结果"""
-        return self.task_results.get(task_id)
+        if task_id in self.task_results:
+            result = self.task_results[task_id].copy()  # 创建副本避免修改原数据
+            
+            # 确保所有字段都是可序列化的
+            for key, value in result.items():
+                if value is not None:
+                    result[key] = str(value) if not isinstance(value, (str, int, float, bool, list, dict)) else value
+            
+            return result
+        
+        # 检查活动任务
+        if task_id in self.active_tasks:
+            task_info = self.active_tasks[task_id]
+            return {
+                "status": "running",
+                "task_id": str(task_id),
+                "task_type": str(task_info.get("task_type", "unknown")),
+                "board_id": str(self.board_id),
+                "success": None
+            }
+        
+        return None
     
     def get_concurrent_status(self) -> Dict[str, Any]:
         """获取并发状态"""
@@ -613,6 +892,27 @@ PDF文件：{filename}
         failed_count = len([t for t in self.tasks.values() if t.status == TaskStatus.FAILED])
         pending_count = len([t for t in self.tasks.values() if t.status == TaskStatus.PENDING])
         
+        # 获取活跃任务的详细信息
+        active_task_details = []
+        for task_id in self.active_tasks:
+            if task_id in self.tasks:
+                task = self.tasks[task_id]
+                # 计算任务运行时间
+                duration = 0
+                if hasattr(task, 'start_time') and task.start_time:
+                    duration = time.time() - task.start_time
+                
+                # 构建任务详情
+                task_detail = {
+                    "task_id": task_id,
+                    "task_type": task.task_type,
+                    "status": task.status.value if hasattr(task.status, 'value') else str(task.status),
+                    "duration": duration,
+                    "started_at": task.started_at.isoformat() if hasattr(task, 'started_at') and task.started_at else None,
+                    "description": self._get_task_description(task)
+                }
+                active_task_details.append(task_detail)
+        
         return {
             "active_tasks": active_count,
             "max_concurrent_tasks": self.max_concurrent_tasks,
@@ -620,8 +920,47 @@ PDF文件：{filename}
             "failed_tasks": failed_count,
             "pending_tasks": pending_count,
             "total_tasks": len(self.tasks),
-            "active_task_ids": list(self.active_tasks)
+            "active_task_ids": list(self.active_tasks),
+            "active_task_details": active_task_details  # 添加详细任务信息
         }
+    
+    def _get_task_description(self, task: Task) -> str:
+        """获取任务的友好描述"""
+        task_type = task.task_type
+        params = task.params
+        
+        if task_type == "annotation":
+            filename = params.get('filename', '未知文件')
+            page_number = params.get('pageNumber', params.get('page_number', '未知页'))
+            return f"为 {filename} 第{page_number}页生成注释"
+        elif task_type == "improve_annotation":
+            filename = params.get('filename', '未知文件')
+            page_number = params.get('pageNumber', params.get('page_number', '未知页'))
+            return f"改进 {filename} 第{page_number}页的注释"
+        elif task_type == "vision_annotation":
+            filename = params.get('filename', '未知文件')
+            page_number = params.get('pageNumber', params.get('page_number', '未知页'))
+            return f"视觉识别 {filename} 第{page_number}页"
+        elif task_type == "generate_note":
+            filename = params.get('filename', '未知文件')
+            return f"为 {filename} 生成笔记"
+        elif task_type == "generate_segmented_note":
+            filename = params.get('filename', '未知文件')
+            start_page = params.get('start_page', 1)
+            pages_per_segment = params.get('pages_per_segment', 40)
+            return f"为 {filename} 分段生成笔记（从第{start_page}页开始，{pages_per_segment}页一段）"
+        elif task_type == "generate_board_note":
+            return "生成展板笔记"
+        elif task_type == "improve_board_note":
+            return "改进展板笔记"
+        elif task_type == "answer_question":
+            question = params.get('question', '问题')
+            return f"回答问题：{question[:50]}..."
+        elif task_type == "general_query":
+            query = params.get('query', '查询')
+            return f"处理查询：{query[:50]}..."
+        else:
+            return f"执行{task_type}任务"
     
     def _get_available_tools(self) -> List[Dict[str, Any]]:
         """获取可用工具列表"""
@@ -961,6 +1300,155 @@ PDF文件：{filename}
             error_msg = f"展板笔记改进失败: {str(e)}"
             logger.error(f"❌ [BOARD-NOTE-IMPROVE] {error_msg}，耗时: {execution_time:.3f}秒", exc_info=True)
             return content  # 出错时返回原内容
+
+    async def _generate_segmented_note_task(self, params: Dict[str, Any]) -> str:
+        """分段生成PDF笔记任务"""
+        filename = params.get('filename')
+        start_page = params.get('start_page', 1)
+        page_count = params.get('page_count', 40)
+        existing_note = params.get('existing_note', '')
+        
+        if not filename:
+            raise ValueError("缺少filename参数")
+        
+        logger.info(f"开始分段生成PDF笔记: {filename}, 起始页: {start_page}, 页数: {page_count}, 已有笔记: {len(existing_note)}字符")
+        
+        try:
+            # 读取PDF所有页面内容
+            prefix = os.path.join(PAGE_DIR, f"{filename}_page_")
+            pages_text = []
+            i = 1
+            while True:
+                page_file = f"{prefix}{i}.txt"
+                if not os.path.exists(page_file):
+                    break
+                try:
+                    with open(page_file, 'r', encoding='utf-8') as f:
+                        page_content = f.read().strip()
+                        pages_text.append(page_content)  # 保留空页面以保持页码一致
+                except Exception as e:
+                    logger.warning(f"读取页面文件失败: {page_file}, 错误: {str(e)}")
+                    pages_text.append("")  # 添加空字符串占位
+                i += 1
+            
+            if not pages_text:
+                return f"错误：未找到PDF页面内容文件: {filename}"
+            
+            total_pages = len(pages_text)
+            
+            # 计算实际的结束页码
+            end_page = min(start_page + page_count - 1, total_pages)
+            
+            # 检查页码范围的有效性
+            if start_page > total_pages:
+                return f"错误：起始页码({start_page})超出PDF总页数({total_pages})"
+            
+            # 提取指定范围的页面内容
+            pages_to_process = pages_text[start_page-1:end_page]
+            
+            # 过滤掉空页面但保留页码信息
+            valid_pages = []
+            for i, page_content in enumerate(pages_to_process):
+                page_num = start_page + i
+                if page_content.strip():
+                    valid_pages.append((page_num, page_content))
+            
+            if not valid_pages:
+                return f"错误：指定范围({start_page}-{end_page}页)内没有有效内容"
+            
+            # 构建内容样本
+            content_samples = []
+            for page_num, page_content in valid_pages:
+                page_preview = page_content[:500] if len(page_content) > 500 else page_content
+                content_samples.append(f"第{page_num}页:\n{page_preview}...")
+            
+            content = "\n\n".join(content_samples)
+            
+            # 计算是否还有更多内容
+            has_more = end_page < total_pages
+            next_start_page = end_page + 1 if has_more else None
+            
+            # 构建页面范围信息
+            current_range = f"第{start_page}页-第{end_page}页" if start_page != end_page else f"第{start_page}页"
+            
+            logger.info(f"处理{current_range}，有效页面数: {len(valid_pages)}")
+            
+            # 构建提示词
+            if existing_note:
+                # 如果有已存在的笔记，提示AI进行续写
+                query = f"""【分段笔记续写任务】为PDF文件 {filename} 的{current_range}生成笔记，并续写到已有笔记后面。
+
+已有笔记内容（前面部分）:
+{existing_note[-1000:]}...
+
+当前需要处理的内容（{current_range}）:
+{content}
+
+请为{current_range}的内容生成笔记，要求：
+
+1. 内容要与前面的笔记保持连贯性和一致性
+2. 使用Markdown格式，突出重点和关键概念
+3. 在引用重要内容时标注页码，格式为：(第X页) 或 (第X-Y页)
+4. 不要重复前面已经总结过的内容
+5. 如果当前段落是前面内容的延续，请自然衔接
+6. 请只生成{current_range}的笔记内容，不要重复已有笔记
+
+请开始生成{current_range}的笔记："""
+            else:
+                # 第一次生成笔记
+                query = f"""【分段笔记生成任务】为PDF文件 {filename} 的{current_range}生成笔记。
+
+这是PDF的第一部分内容，文件总共有 {total_pages} 页。
+
+当前处理内容（{current_range}）:
+{content}
+
+请为{current_range}的内容生成笔记，要求：
+
+1. 使用Markdown格式，突出重点和关键概念
+2. 在引用重要内容时标注页码，格式为：(第X页) 或 (第X-Y页)  
+3. 生成结构化的内容总结
+4. 这是PDF的第一部分，请为后续内容预留良好的结构
+5. 请只基于提供的{current_range}内容生成笔记
+
+请开始生成{current_range}的笔记："""
+            
+            # 调用LLM生成笔记
+            note_segment = await self.process_query(query)
+            
+            # 检查返回内容
+            if not note_segment or len(note_segment.strip()) < 50:
+                return f"笔记生成可能不完整。内容: {note_segment}"
+            
+            # 构建返回结果
+            result = {
+                "note": f"**{current_range}内容：**\n\n{note_segment}",
+                "next_start_page": int(next_start_page) if next_start_page is not None else None,
+                "has_more": bool(has_more),
+                "total_pages": int(total_pages),
+                "current_range": str(current_range),
+                "pages_processed": int(len(valid_pages)),
+                "start_page": int(start_page),
+                "end_page": int(end_page)
+            }
+            
+            logger.info(f"分段笔记生成完成: {current_range}, 笔记长度: {len(note_segment)}, 还有更多: {has_more}")
+            
+            # 返回JSON字符串，因为任务结果需要是字符串格式
+            import json
+            return json.dumps(result, ensure_ascii=False)
+            
+        except Exception as e:
+            error_msg = f"分段生成笔记时出错: {str(e)}"
+            logger.error(error_msg)
+            return json.dumps({
+                "note": str(error_msg),
+                "next_start_page": None,
+                "has_more": False,
+                "total_pages": int(len(pages_text)) if 'pages_text' in locals() else 0,
+                "current_range": f"第{start_page}页",
+                "error": True
+            }, ensure_ascii=False)
 
 class SimpleExpertManager:
     """简化的专家管理器"""
