@@ -3067,24 +3067,24 @@ function App() {
     }
     
     // 开发环境调试信息
-    const debugInfo = process.env.NODE_ENV !== 'production' ? (
-      <div style={{
-        position: 'absolute',
-        top: 5,
-        right: 5,
-        background: 'rgba(0,0,0,0.7)',
-        color: 'white',
-        padding: '2px 5px',
-        fontSize: '9px',
-        borderRadius: 3,
-        zIndex: 1000,
-        maxWidth: '200px',
-        overflow: 'hidden'
-      }}>
-        <div>窗口类型: {windowType}</div>
-        <div>PDF ID: {pdf.id.substring(0, 8)}...</div>
-      </div>
-    ) : null;
+    // const debugInfo = process.env.NODE_ENV !== 'production' ? (
+    //   <div style={{
+    //     position: 'absolute',
+    //     top: 5,
+    //     right: 5,
+    //     background: 'rgba(0,0,0,0.7)',
+    //     color: 'white',
+    //     padding: '2px 5px',
+    //     fontSize: '9px',
+    //     borderRadius: 3,
+    //     zIndex: 1000,
+    //     maxWidth: '200px',
+    //     overflow: 'hidden'
+    //   }}>
+    //     <div>窗口类型: {windowType}</div>
+    //     <div>PDF ID: {pdf.id.substring(0, 8)}...</div>
+    //   </div>
+    // ) : null;
     
     // 根据窗口类型渲染不同内容
     switch (windowType) {
@@ -3244,7 +3244,7 @@ function App() {
         showColorPicker={windowType === 'pdf'}  // 只在PDF窗口显示颜色选择器
         resizable
       >
-        {debugInfo}
+        {/* {debugInfo} */}
         {content}
       </DraggableWindow>
     );
@@ -4843,6 +4843,36 @@ function App() {
     }
   }, []);
 
+  // 渲染展板笔记内容 - 完全模仿PDF窗口的userNote结构
+  const renderBoardNoteContent = (boardId) => {
+    console.log('🎨 [DEBUG] renderBoardNoteContent 被调用:', {
+      boardId,
+      noteLength: boardNotes[boardId]?.length || 0,
+      loading: boardNoteLoading[boardId] || false
+    });
+
+    return (
+      <UserNoteEditor
+        aiContent={''} // 展板笔记没有AI内容，留空
+        content={boardNotes[boardId] || ''}
+        onSave={(content) => updateBoardNote(boardId, content)}
+        loading={boardNoteLoading[boardId] || false}
+        editorTitle="展板笔记"
+        color="#999"
+        onAIImprove={(content) => {
+          const improvePrompt = window.prompt('请输入改进提示（例如：用中文）', '用中文');
+          if (improvePrompt) {
+            return handleImproveBoardNote(boardId, content, improvePrompt);
+          } else {
+            return Promise.resolve(content);
+          }
+        }}
+        showGenerateButton={true}
+        onGenerate={() => handleGenerateBoardNote(boardId)}
+      />
+    );
+  };
+
   // 生成展板笔记窗口的右键菜单选项
   const generateBoardNoteContextMenu = (boardId) => {
     if (!boardId) return [];
@@ -4880,7 +4910,7 @@ function App() {
   return (
     <Layout style={{ height: "100vh" }}>
       {/* 调试面板 */}
-      {renderDebugInfo()}
+      {/* {renderDebugInfo()} */}
       
       {/* 键盘快捷键处理组件 */}
       <KeyboardShortcuts
@@ -5239,7 +5269,7 @@ function App() {
             </div>
       </Modal>
 
-          {/* 展板笔记窗口 */}
+          {/* 展板笔记窗口 - 完全使用PDF窗口的结构 */}
           {currentFile && boardNoteWindowVisible[currentFile.key] && (
             <DraggableWindow
               key={`boardNote-${currentFile.key}`}
@@ -5252,34 +5282,24 @@ function App() {
                 const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
                 setBoardNoteWindowSize(newSize);
               }}
-              zIndex={600}  // 展板笔记窗口z-index
+              zIndex={600}
               windowId={`boardNote:${currentFile.key}`}
               windowType="boardNote"
               onBringToFront={() => handleBringNonPdfWindowToFront(`boardNote:${currentFile.key}`, 'boardNote')}
               isPinned={pinnedWindows.some(w => w.pdfId === 'boardNote' && w.windowName === currentFile.key)}
               onTogglePin={() => handleToggleWindowPin(`boardNote:${currentFile.key}`)}
               onContextMenu={() => generateBoardNoteContextMenu(currentFile.key)}
-              titleBarColor="#999"  // 展板笔记使用灰色标题栏，表示不隶属于任何PDF
+              titleBarColor="#999"
               resizable
             >
-              <UserNoteEditor
-                content={boardNotes[currentFile.key] || ''}
-                onChange={(content) => updateBoardNote(currentFile.key, content)}
-                onImprove={(content, improvePrompt) => handleImproveBoardNote(currentFile.key, content, improvePrompt)}
-                placeholder="展板笔记将根据展板内所有PDF的笔记综合生成..."
-                isLoading={boardNoteLoading[currentFile.key] || false}
-                editorTitle="展板笔记"
-                color="#999"  // 使用灰色主题
-                showGenerateButton={true}
-                onGenerate={() => handleGenerateBoardNote(currentFile.key)}
-              />
+              {renderBoardNoteContent(currentFile.key)}
             </DraggableWindow>
           )}
         </Content>
       </Layout>
       
       {/* 调试面板 */}
-      {renderDebugPanel()}
+      {/* {renderDebugPanel()} */}
       
       {/* 全局右键菜单组件 */}
       <GlobalContextMenu onCommand={handleContextMenuCommand} />

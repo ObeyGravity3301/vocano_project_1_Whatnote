@@ -169,8 +169,8 @@ const UserNoteEditor = ({
   }, []);
   
   return (
-    <div className="user-note-editor">
-      <div className="editor-toolbar" style={{ borderColor: color }}>
+    <div className="user-note-editor" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div className="editor-toolbar" style={{ borderColor: color, flexShrink: 0 }}>
         <div className="editor-toolbar-left">
           <span style={{ fontWeight: 'bold', color }}>{editorTitle}</span>
           {process.env.NODE_ENV !== 'production' && (
@@ -259,12 +259,13 @@ const UserNoteEditor = ({
         size="small"
         tabBarStyle={{ margin: '0 16px' }}
         className="note-tabs"
+        style={{ flex: 1, display: 'flex', flexDirection: 'column' }}
       >
         <TabPane 
           tab={<span><FileTextOutlined /> 我的笔记</span>} 
           key="user"
         >
-          <div className="tabs-content" style={{ position: 'relative' }}>
+          <div className="tabs-content" style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column' }}>
             {/* 加载遮罩 */}
             {(loading || isImproving) && (
               <div style={{
@@ -284,7 +285,7 @@ const UserNoteEditor = ({
             )}
             
             {editMode ? (
-              <div className="note-editor-container" style={{ position: 'relative' }}>
+              <div className="note-editor-container" style={{ position: 'relative', flex: 1, display: 'flex', flexDirection: 'column' }}>
                 <textarea
                   className="note-editor"
                   value={localContent}
@@ -293,11 +294,13 @@ const UserNoteEditor = ({
                   disabled={loading || isImproving}
                   style={{ 
                     width: '100%', 
-                    height: '300px', 
+                    flex: 1, // 填充所有可用空间
+                    minHeight: '200px', // 最小高度
                     border: '1px solid #d9d9d9',
                     borderRadius: '4px',
                     padding: '8px',
-                    resize: 'vertical'
+                    resize: 'none', // 禁用手动调整大小，让它自动填充
+                    boxSizing: 'border-box'
                   }}
                 />
                 {autoSaveVisible && (
@@ -319,10 +322,12 @@ const UserNoteEditor = ({
               <div className="preview-display" style={{ 
                 padding: '16px', 
                 overflow: 'auto', 
-                maxHeight: '300px',
+                flex: 1, // 填充所有可用空间
+                minHeight: '200px', // 最小高度
                 border: '1px solid #d9d9d9',
                 borderRadius: '4px',
-                background: '#fafafa'
+                background: '#fafafa',
+                boxSizing: 'border-box'
               }}>
                 <MarkdownMathRenderer>
                   {localContent || '暂无笔记内容'}
@@ -337,14 +342,16 @@ const UserNoteEditor = ({
             tab={<span><RobotOutlined /> AI内容</span>} 
             key="ai"
           >
-            <div className="tabs-content">
+            <div className="tabs-content" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
               <div style={{ 
                 padding: '16px', 
                 overflow: 'auto', 
-                maxHeight: '300px',
+                flex: 1, // 填充所有可用空间
+                minHeight: '200px', // 最小高度
                 border: '1px solid #d9d9d9',
                 borderRadius: '4px',
-                background: '#f6ffed'
+                background: '#f6ffed',
+                boxSizing: 'border-box'
               }}>
                 <MarkdownMathRenderer>
                   {aiContent || '暂无AI内容'}
