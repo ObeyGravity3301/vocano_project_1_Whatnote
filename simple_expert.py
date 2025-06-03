@@ -242,10 +242,13 @@ class SimpleExpert:
             )
             
             # 根据任务类型执行对应的处理
-            if task.task_type == "annotation":
+            if task.task_type == "annotation" or task.task_type == "generate_annotation":
                 filename = task.params.get('filename')
                 page_number = task.params.get('pageNumber', task.params.get('page_number'))
-                result = await self._generate_annotation_task(filename, page_number)
+                # 🔧 新增：支持显式传递的风格参数
+                annotation_style = task.params.get('annotationStyle')
+                custom_prompt = task.params.get('customPrompt')
+                result = await self._generate_annotation_task(filename, page_number, annotation_style, custom_prompt)
             elif task.task_type == "vision_annotation":
                 result = await self._vision_annotation_task(task.params)
             elif task.task_type == "improve_annotation":
@@ -322,7 +325,7 @@ class SimpleExpert:
             # 从活动任务中移除
             self.active_tasks.discard(task.task_id)
     
-    async def _generate_annotation_task(self, filename: str, page_number: int) -> str:
+    async def _generate_annotation_task(self, filename: str, page_number: int, annotation_style: str = None, custom_prompt: str = None) -> str:
         """
         生成页面注释任务 - 支持多种注释风格
         """
@@ -331,6 +334,17 @@ class SimpleExpert:
         try:
             logger.info(f"开始注释生成任务: {filename} 第{page_number}页")
             
+            # 🔧 修复：处理风格参数 - 优先使用传入参数，否则使用实例设置
+            if annotation_style:
+                logger.info(f"使用传入的注释风格: {annotation_style}")
+                if annotation_style == 'custom' and custom_prompt:
+                    logger.info(f"使用传入的自定义提示: {custom_prompt[:100]}...")
+            else:
+                # 回退到实例设置
+                annotation_style = getattr(self, 'annotation_style', 'detailed')
+                custom_prompt = getattr(self, 'custom_annotation_prompt', '')
+                logger.info(f"使用实例设置的注释风格: {annotation_style}")
+            
             # 首先尝试获取PDF文字内容
             try:
                 from controller import get_page_text
@@ -338,10 +352,6 @@ class SimpleExpert:
                 
                 if page_text and len(page_text.strip()) > 50:  # 文字内容充足
                     logger.info(f"使用PDF文字生成注释，文字长度: {len(page_text)} 字符")
-                    
-                    # 获取注释风格（从展板状态或默认）
-                    annotation_style = getattr(self, 'annotation_style', 'detailed')
-                    custom_prompt = getattr(self, 'custom_annotation_prompt', '')
                     
                     # 根据风格选择提示词模板
                     annotation_prompt = self._get_annotation_prompt(
@@ -392,10 +402,6 @@ class SimpleExpert:
                     image_data = base64.b64encode(f.read()).decode('utf-8')
                 
                 logger.info(f"成功读取页面图像: {img_path}, 图像大小: {len(image_data)} 字符")
-                
-                # 获取注释风格
-                annotation_style = getattr(self, 'annotation_style', 'detailed')
-                custom_prompt = getattr(self, 'custom_annotation_prompt', '')
                 
                 # 使用视觉识别生成注释 - 修复模型和API调用格式
                 vision_prompt = self._get_vision_annotation_prompt(

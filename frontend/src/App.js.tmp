@@ -18,8 +18,9 @@ import LLMDebugPanel from "./components/LLMDebugPanel";
 import MarkdownMathRenderer from "./components/MarkdownMathRenderer";
 import TaskStatusIndicator from "./components/TaskStatusIndicator";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
-import Console from "./components/Console"; // ̨
+import Console from "./components/Console"; // �������̨���
 import TaskList from "./components/TaskList"; // 导入任务列表组件
+import Console from "./components/Console"; // 导入控制台组件
 import api from './api'; // 导入API客户端
 
 const { Header, Sider, Content } = Layout;
@@ -173,28 +174,6 @@ function App() {
   const [assistantWindowPosition, setAssistantWindowPosition] = useState({ x: 400, y: 200 });
   const [assistantWindowSize, setAssistantWindowSize] = useState({ width: 520, height: 400 });
   const [pendingCommand, setPendingCommand] = useState(null);
-  
-  // 控制台相关状态
-  const [consoleVisible, setConsoleVisible] = useState(false);
-  
-  // 控制台处理函数
-  const handleToggleConsole = () => {
-    setConsoleVisible(!consoleVisible);
-  };
-  
-  const handleConsoleCommand = async (command) => {
-    try {
-      const response = await api.post('/butler/console', {
-        command: command,
-        multi_step_context: null
-      });
-      
-      return response;
-    } catch (error) {
-      console.error('控制台命令执行失败:', error);
-      throw error;
-    }
-  };
   
   // 侧边栏宽度相关状态
   const [siderWidth, setSiderWidth] = useState(280);
@@ -3859,7 +3838,6 @@ function App() {
         onFocusSearch={handleFocusSearch}
         onToggleExpert={handleToggleExpert}
         onToggleButler={handleToggleButler}
-        onToggleConsole={handleToggleConsole}
         onSaveNote={handleSaveNote}
         onExportPdf={handleExportPdf}
         onToggleFullscreen={handleToggleFullscreen}
@@ -4238,16 +4216,6 @@ function App() {
         <TaskList 
           boardId={currentFile.key} 
           apiClient={api}
-        />
-      )}
-      
-      {/* 控制台组件 */}
-      {consoleVisible && (
-        <Console
-          isVisible={consoleVisible}
-          onClose={() => setConsoleVisible(false)}
-          apiClient={api}
-          onCommand={handleConsoleCommand}
         />
       )}
       

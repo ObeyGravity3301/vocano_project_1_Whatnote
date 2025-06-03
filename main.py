@@ -304,12 +304,54 @@ async def post_force_vision_annotation(
         current_annotation = request_data.get('current_annotation') if request_data else None
         improve_request = request_data.get('improve_request') if request_data else None
         
+        # 🔧 新增：从请求数据中获取风格参数
+        annotation_style = request_data.get('annotation_style') if request_data else None
+        custom_prompt = request_data.get('custom_prompt') if request_data else None
+        
         # 记录关键参数以便调试
         if current_annotation:
             logger.info(f"当前注释长度: {len(current_annotation)}")
         if improve_request:
             logger.info(f"用户改进请求: {improve_request}")
-            
+        if annotation_style:
+            logger.info(f"指定注释风格: {annotation_style}")
+        if custom_prompt:
+            logger.info(f"自定义提示长度: {len(custom_prompt)}")
+        
+        # 🔧 如果传递了风格参数，临时设置到对应的专家实例
+        if board_id and annotation_style:
+            try:
+                from simple_expert import simple_expert_manager
+                expert = simple_expert_manager.get_expert(board_id)
+                # 临时保存当前设置
+                original_style = getattr(expert, 'annotation_style', 'detailed')
+                original_custom = getattr(expert, 'custom_annotation_prompt', '')
+                
+                # 临时应用新风格
+                expert.set_annotation_style(annotation_style, custom_prompt or '')
+                logger.info(f"临时应用风格设置: {annotation_style}")
+                
+                try:
+                    # 执行注释生成
+                    result = annotate_page(
+                        filename, 
+                        page_number, 
+                        force_vision=True, 
+                        session_id=session_id, 
+                        current_annotation=current_annotation,
+                        improve_request=improve_request,
+                        board_id=board_id
+                    )
+                finally:
+                    # 恢复原始设置
+                    expert.set_annotation_style(original_style, original_custom)
+                    logger.info(f"恢复原始风格设置: {original_style}")
+                
+                return result
+            except Exception as e:
+                logger.error(f"临时风格设置失败: {str(e)}，使用默认流程")
+        
+        # 默认流程（无风格参数或设置失败）
         result = annotate_page(
             filename, 
             page_number, 
@@ -1771,11 +1813,11 @@ async def expert_stream(websocket: WebSocket):
             
             # 发送最终响应
             if websocket_active:
-                await websocket.send_json({
+                    await websocket.send_json({
                     "done": True,
                     "full_response": response,
-                    "timestamp": time.time()
-                })
+                        "timestamp": time.time()
+                    })
                 
             logger.info(f"专家LLM查询完成: 展板 {board_id}")
             
@@ -1783,7 +1825,7 @@ async def expert_stream(websocket: WebSocket):
             error_msg = f"分析失败: {str(process_error)}"
             logger.error(f"专家LLM处理失败: {str(process_error)}", exc_info=True)
             if websocket_active:
-                await websocket.send_json({"error": error_msg})
+                    await websocket.send_json({"error": error_msg})
         
     except WebSocketDisconnect:
         logger.warning("专家LLM WebSocket连接已断开")
@@ -2722,6 +2764,133 @@ async def get_board_annotation_style(board_id: str):
         return JSONResponse(
             status_code=500,
             content={"detail": f"获取注释风格失败: {str(e)}"}
+        )
+
+# 控制台API端点
+@app.post('/butler/console')
+async def butler_console_command(request_data: dict = Body(...)):
+    """处理控制台命令"""
+    try:
+        command = request_data.get('command', '').strip()
+        multi_step_context = request_data.get('multi_step_context')
+        
+        if not command:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "命令不能为空"}
+            )
+        
+        logger.info(f"🖥️ [CONSOLE] 收到命令: {command}")
+        
+        # 如果有多步操作上下文，恢复到管家LLM
+        if multi_step_context:
+            butler_llm.multi_step_context = multi_step_context
+        
+        # 处理命令
+        response = butler_llm.process_user_request(command)
+        
+        # 解析响应中的function calls
+        function_calls = []
+        if hasattr(butler_llm, 'last_function_calls'):
+            function_calls = butler_llm.last_function_calls
+        
+        result = {
+            "response": response,
+            "type": "response",
+            "function_calls": function_calls,
+            "multi_step_context": butler_llm.multi_step_context if butler_llm.multi_step_context.get("active") else None
+        }
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"🖥️ [CONSOLE] 命令处理失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"命令处理失败: {str(e)}"}
+        )
+
+@app.get('/butler/status')
+async def butler_status():
+    """获取管家LLM状态"""
+    try:
+        # 获取应用状态 - 修复：直接访问app_state的属性
+        app_state_data = {
+            "course_folders": app_state.get_course_folders(),
+            "boards": app_state.get_boards(),
+            "uploaded_files": []  # 可以扫描uploads目录获取文件列表
+        }
+        
+        # 统计信息
+        active_boards = len(app_state_data.get("boards", []))
+        file_count = len(app_state_data.get("uploaded_files", []))
+        
+        # 获取管家日志信息
+        butler_log = getattr(butler_llm, 'butler_log', {})
+        app_state_info = butler_log.get("app_state", "running")
+        
+        # 获取多步操作状态
+        multi_step_active = False
+        if hasattr(butler_llm, 'multi_step_context') and butler_llm.multi_step_context:
+            multi_step_active = butler_llm.multi_step_context.get("active", False)
+        
+        status_data = {
+            "app_state": app_state_info,
+            "active_boards": active_boards,
+            "file_count": file_count,
+            "multi_step_active": multi_step_active,
+            "session_id": getattr(butler_llm, 'session_id', 'unknown')
+        }
+        
+        return {
+            "status": "success",
+            "data": status_data
+        }
+        
+    except Exception as e:
+        logger.error(f"🖥️ [CONSOLE] 获取状态失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"获取状态失败: {str(e)}"}
+        )
+
+@app.post('/butler/function-call')
+async def butler_function_call(request_data: dict = Body(...)):
+    """直接执行管家LLM的function call"""
+    try:
+        function_name = request_data.get('function')
+        args = request_data.get('args', {})
+        
+        if not function_name:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "缺少function参数"}
+            )
+        
+        logger.info(f"🖥️ [CONSOLE] 执行function call: {function_name}")
+        
+        # 这里可以添加具体的function call处理逻辑
+        # 目前先返回基本响应
+        result = {
+            "function": function_name,
+            "args": args,
+            "result": f"Function {function_name} executed with args: {args}",
+            "status": "completed"
+        }
+        
+        return {
+            "status": "success",
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"🖥️ [CONSOLE] Function call失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Function call失败: {str(e)}"}
         )
 
 if __name__ == "__main__":

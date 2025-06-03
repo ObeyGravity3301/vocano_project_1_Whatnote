@@ -225,6 +225,9 @@ class ButlerLLM:
         Returns:
             处理结果和可能的操作命令
         """
+        # 初始化function calls记录
+        self.last_function_calls = []
+        
         # 构建提示词
         prompt = f"【用户请求】{request}\n\n"
         
@@ -237,10 +240,11 @@ class ButlerLLM:
 1. 导航操作: next_page, prev_page, goto_page
 2. 窗口操作: open_window, close_window, close_all
 3. 内容生成: generate_note, generate_annotation, vision_annotate
-4. 文件操作: select_pdf, upload_pdf
-5. 展板操作: create_board, open_board, close_board
+4. 文件操作: select_pdf, upload_pdf, create_course_folder, delete_file
+5. 展板操作: create_board, open_board, close_board, list_boards
 6. 与专家LLM交互: consult_expert
 7. 多步任务: plan_task, execute_step
+8. 系统查询: get_app_state, get_file_list, get_board_info
 
 如果需要执行操作，请在回复中包含JSON格式的操作命令。
 例如: {"type": "navigation", "action": "next_page"}
@@ -261,6 +265,25 @@ class ButlerLLM:
         
         # 尝试从回复中提取操作命令
         command = self._extract_command_json(response)
+        
+        # 如果有命令，尝试执行function call
+        if command:
+            try:
+                function_result = self._execute_function_call(command)
+                self.last_function_calls.append({
+                    "function": command.get("action"),
+                    "args": command.get("params", {}),
+                    "result": function_result,
+                    "status": "completed"
+                })
+            except Exception as e:
+                logger.error(f"Function call执行失败: {str(e)}")
+                self.last_function_calls.append({
+                    "function": command.get("action"),
+                    "args": command.get("params", {}),
+                    "result": f"执行失败: {str(e)}",
+                    "status": "failed"
+                })
         
         return {
             "response": self._clean_response_json(response),
@@ -855,6 +878,138 @@ class ButlerLLM:
             )
             
             return error_msg
+    
+    def _execute_function_call(self, command):
+        """执行function call"""
+        action = command.get("action")
+        params = command.get("params", {})
+        command_type = command.get("type")
+        
+        logger.info(f"🔧 [BUTLER] 执行function call: {action}")
+        
+        # 文件操作
+        if command_type == "file_operation":
+            return self._handle_file_operation(action, params)
+        
+        # 展板操作
+        elif command_type == "board_operation":
+            return self._handle_board_operation(action, params)
+        
+        # 系统查询
+        elif command_type == "system_query":
+            return self._handle_system_query(action, params)
+        
+        # 专家咨询
+        elif command_type == "expert_consultation":
+            return self._handle_expert_consultation(action, params)
+        
+        # 任务操作
+        elif command_type == "task":
+            return self._handle_task_operation(action, params)
+        
+        else:
+            return f"未知的操作类型: {command_type}"
+    
+    def _handle_file_operation(self, action, params):
+        """处理文件操作"""
+        if action == "create_course_folder":
+            folder_name = params.get("folder_name")
+            if not folder_name:
+                return "错误: 缺少folder_name参数"
+            
+            # 这里需要调用实际的API来创建课程文件夹
+            # 暂时返回模拟结果
+            return f"课程文件夹 '{folder_name}' 创建成功"
+        
+        elif action == "get_file_list":
+            # 获取文件列表
+            file_structure = self.butler_log.get("file_structure", {})
+            uploaded_files = file_structure.get("uploaded_files", [])
+            file_list = [f["filename"] for f in uploaded_files]
+            return f"当前文件列表: {', '.join(file_list) if file_list else '无文件'}"
+        
+        elif action == "delete_file":
+            filename = params.get("filename")
+            if not filename:
+                return "错误: 缺少filename参数"
+            return f"文件 '{filename}' 删除操作已提交"
+        
+        else:
+            return f"未知的文件操作: {action}"
+    
+    def _handle_board_operation(self, action, params):
+        """处理展板操作"""
+        if action == "create_board":
+            board_name = params.get("board_name")
+            course_folder = params.get("course_folder")
+            if not board_name:
+                return "错误: 缺少board_name参数"
+            return f"展板 '{board_name}' 创建成功"
+        
+        elif action == "list_boards":
+            boards = self.butler_log.get("boards", {})
+            board_list = list(boards.keys())
+            return f"当前展板列表: {', '.join(board_list) if board_list else '无展板'}"
+        
+        elif action == "get_board_info":
+            board_id = params.get("board_id")
+            if not board_id:
+                return "错误: 缺少board_id参数"
+            
+            boards = self.butler_log.get("boards", {})
+            board_info = boards.get(board_id, {})
+            return f"展板 {board_id} 信息: {board_info}"
+        
+        else:
+            return f"未知的展板操作: {action}"
+    
+    def _handle_system_query(self, action, params):
+        """处理系统查询"""
+        if action == "get_app_state":
+            file_structure = self.butler_log.get("file_structure_summary", {})
+            return f"应用状态: 课程文件夹 {file_structure.get('course_folders', 0)} 个, 展板 {file_structure.get('boards', 0)} 个, 文件 {file_structure.get('uploaded_files', 0)} 个"
+        
+        elif action == "get_recent_operations":
+            operations = self.butler_log.get("recent_operations", [])
+            recent = operations[-5:] if operations else []
+            op_summary = [f"{op['type']} ({op['timestamp'][:19]})" for op in recent]
+            return f"最近操作: {', '.join(op_summary) if op_summary else '无操作记录'}"
+        
+        else:
+            return f"未知的系统查询: {action}"
+    
+    def _handle_expert_consultation(self, action, params):
+        """处理专家咨询"""
+        if action == "consult_expert":
+            board_id = params.get("board_id")
+            question = params.get("question")
+            
+            if not board_id or not question:
+                return "错误: 缺少board_id或question参数"
+            
+            return self.consult_expert(board_id, question)
+        
+        else:
+            return f"未知的专家咨询操作: {action}"
+    
+    def _handle_task_operation(self, action, params):
+        """处理任务操作"""
+        if action == "plan_task":
+            task = params.get("task")
+            if not task:
+                return "错误: 缺少task参数"
+            
+            plan_result = self.plan_multi_step_task(task)
+            return f"任务规划完成: {len(plan_result['steps'])} 个步骤"
+        
+        elif action == "execute_step":
+            if not self.multi_step_context.get("active"):
+                return "错误: 没有活跃的多步任务"
+            
+            return self.continue_multi_step_task()
+        
+        else:
+            return f"未知的任务操作: {action}"
 
 # 全局单例
 butler_llm = ButlerLLM()

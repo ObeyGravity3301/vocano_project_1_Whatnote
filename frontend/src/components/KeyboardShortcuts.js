@@ -17,6 +17,7 @@ const KeyboardShortcuts = ({
   onFocusSearch,
   onToggleExpert,
   onToggleButler,
+  onToggleConsole,
   onSaveNote,
   onExportPdf,
   onToggleFullscreen,
@@ -200,6 +201,12 @@ const KeyboardShortcuts = ({
       description: '打开/关闭管家助手',
       handler: () => {
         onToggleButler();
+      }
+    },
+    '`': {
+      description: '打开/关闭控制台',
+      handler: () => {
+        onToggleConsole();
       }
     },
     'ctrl+shift+a': {

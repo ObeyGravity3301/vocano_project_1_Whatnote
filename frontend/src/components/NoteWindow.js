@@ -24,7 +24,9 @@ const NoteWindow = ({
   segmentedNoteStatus = null,
   onContinueGenerate = null,
   // 新增boardId prop用于风格选择器
-  boardId = null
+  boardId = null,
+  // 新增pdf对象用于获取页面加载状态
+  pdf = null
 }) => {
   console.log('🎨 [DEBUG] NoteWindow 组件渲染:', {
     type,
@@ -53,6 +55,19 @@ const NoteWindow = ({
     }
     return String(value);
   };
+
+  // 计算当前页面的加载状态
+  const currentPageLoading = type === 'annotation' && pdf ? 
+    pdf.pageAnnotationLoadings?.[pageNumber] || false : 
+    loading;
+    
+  console.log('🔄 [DEBUG] 加载状态计算:', {
+    type,
+    pageNumber,
+    currentPageLoading,
+    fallbackLoading: loading,
+    pageAnnotationLoadings: pdf?.pageAnnotationLoadings
+  });
 
   // 使用useEffect监控props变化
   useEffect(() => {
@@ -496,8 +511,8 @@ const NoteWindow = ({
               onClick={onContinueGenerate}
               size="small"
               type="primary"
-              loading={loading}
-              disabled={loading}
+              loading={currentPageLoading}
+              disabled={currentPageLoading}
               style={{ marginLeft: 8 }}
               title={`继续生成第${segmentedNoteStatus.currentStartPage}页及后续内容`}
             >
@@ -556,7 +571,7 @@ const NoteWindow = ({
       )}
       
       <div className="note-content">
-        {loading ? (
+        {currentPageLoading ? (
           <div className="note-loading">正在生成内容，请稍候...</div>
         ) : improving ? (
           <div className="note-loading">

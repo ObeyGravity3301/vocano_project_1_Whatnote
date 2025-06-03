@@ -354,8 +354,8 @@ const api = {
     });
   },
   
-  // 生成注释 - 使用并发API
-  generateAnnotation: (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
+  // 生成注释 - 使用并发API，包含风格确认
+  generateAnnotation: async (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
     console.log(`🚀 使用并发API生成注释: ${filename} 第${pageNumber}页`);
     
     if (!boardId) {
@@ -363,7 +363,30 @@ const api = {
       throw new Error('并发API需要boardId');
     }
 
-    // 构建任务信息
+    // 🔧 修复：生成注释前先确认当前风格
+    let currentStyle = 'detailed'; // 默认风格
+    let customPrompt = '';
+    
+    try {
+      console.log(`🎨 获取展板 ${boardId} 的当前注释风格...`);
+      const styleResponse = await fetch(`${API_BASE_URL}/api/boards/${boardId}/annotation-style`);
+      
+      if (styleResponse.ok) {
+        const styleData = await styleResponse.json();
+        currentStyle = styleData.annotation_style || 'detailed';
+        customPrompt = styleData.custom_prompt || '';
+        console.log(`✅ 当前注释风格: ${currentStyle}`);
+        if (currentStyle === 'custom') {
+          console.log(`📝 自定义提示: ${customPrompt.substring(0, 100)}...`);
+        }
+      } else {
+        console.warn(`⚠️ 获取风格失败，使用默认风格: ${currentStyle}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ 风格确认失败，使用默认风格: ${error.message}`);
+    }
+
+    // 构建任务信息 - 包含确认的风格信息
     const task_info = {
       type: 'generate_annotation',
       params: {
@@ -371,7 +394,10 @@ const api = {
         pageNumber: pageNumber,
         sessionId: sessionId,
         currentAnnotation: currentAnnotation,
-        improveRequest: improveRequest
+        improveRequest: improveRequest,
+        // 🔧 新增：显式传递当前风格信息
+        annotationStyle: currentStyle,
+        customPrompt: customPrompt
       }
     };
 
@@ -380,7 +406,13 @@ const api = {
       task_info: task_info
     };
 
-    console.log('📝 提交并发注释任务:', JSON.stringify(body));
+    console.log('📝 提交并发注释任务（包含风格信息）:', {
+      boardId: boardId,
+      filename: filename,
+      pageNumber: pageNumber,
+      annotationStyle: currentStyle,
+      customPromptLength: customPrompt.length
+    });
 
     // 使用并发API提交任务
     return fetch(`${API_BASE_URL}/api/expert/dynamic/submit`, {
@@ -453,8 +485,35 @@ const api = {
     });
   },
   
-  // 使用视觉模型生成注释
-  generateVisionAnnotation: (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
+  // 使用视觉模型生成注释 - 包含风格确认
+  generateVisionAnnotation: async (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
+    console.log(`🚀 使用视觉模型生成注释: ${filename} 第${pageNumber}页`);
+    
+    // 🔧 修复：生成注释前先确认当前风格
+    let currentStyle = 'detailed'; // 默认风格
+    let customPrompt = '';
+    
+    if (boardId) {
+      try {
+        console.log(`🎨 获取展板 ${boardId} 的当前注释风格...`);
+        const styleResponse = await fetch(`${API_BASE_URL}/api/boards/${boardId}/annotation-style`);
+        
+        if (styleResponse.ok) {
+          const styleData = await styleResponse.json();
+          currentStyle = styleData.annotation_style || 'detailed';
+          customPrompt = styleData.custom_prompt || '';
+          console.log(`✅ 视觉注释使用风格: ${currentStyle}`);
+          if (currentStyle === 'custom') {
+            console.log(`📝 自定义提示: ${customPrompt.substring(0, 100)}...`);
+          }
+        } else {
+          console.warn(`⚠️ 获取风格失败，使用默认风格: ${currentStyle}`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ 风格确认失败，使用默认风格: ${error.message}`);
+      }
+    }
+    
     const query = new URLSearchParams();
     if (sessionId) query.append('session_id', sessionId);
     
@@ -488,6 +547,16 @@ const api = {
       }
     }
     
+    // 🔧 新增：传递风格信息到视觉注释API
+    if (currentStyle !== 'detailed') {
+      body.annotation_style = currentStyle;
+      console.log(`📝 传递注释风格到视觉API: ${currentStyle}`);
+    }
+    if (currentStyle === 'custom' && customPrompt) {
+      body.custom_prompt = customPrompt;
+      console.log(`📝 传递自定义提示到视觉API: ${customPrompt.substring(0, 100)}...`);
+    }
+    
     // 添加展板ID
     if (boardId) {
       body.board_id = boardId;
@@ -495,7 +564,13 @@ const api = {
     }
     
     // 日志完整请求体，便于调试
-    console.log('视觉识别请求体:', JSON.stringify(body));
+    console.log('视觉识别请求体（包含风格信息）:', {
+      isImproveRequest: isImproveRequest,
+      annotationStyle: currentStyle,
+      customPromptLength: customPrompt.length,
+      boardId: boardId,
+      hasImproveRequest: !!improveRequest
+    });
     
     // 使用直接fetch调用，不再依赖apiRequest自动添加/api前缀
     return fetch(`${API_BASE_URL}${endpoint}`, {
