@@ -1422,8 +1422,8 @@ class ButlerLLM:
                 except json.JSONDecodeError:
                     continue
             
-        return None
-    
+            return None
+            
         except Exception as e:
             logger.error(f"提取命令JSON失败: {str(e)}")
             return None
@@ -1467,7 +1467,7 @@ class ButlerLLM:
             
             # 清理多余的空行和空白
             cleaned = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned)
-        cleaned = cleaned.strip()
+            cleaned = cleaned.strip()
         
             return cleaned if cleaned else response_text
             
