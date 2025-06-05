@@ -80,53 +80,6 @@ if errorlevel 1 (
 echo [OK] pip found
 
 echo.
-echo Checking Python dependencies...
-python -c "import fastapi" >nul 2>&1
-if errorlevel 1 (
-    echo Installing Python dependencies...
-    pip install -r requirements.txt
-    if errorlevel 1 (
-        echo ERROR: Failed to install Python dependencies
-        echo Please check your internet connection and try again
-        echo.
-        pause
-        exit /b 1
-    )
-)
-echo [OK] Python dependencies ready
-
-echo.
-echo Checking frontend dependencies...
-if not exist "frontend\node_modules" (
-    echo Installing frontend dependencies...
-    echo This may take a few minutes...
-    cd frontend
-    npm install
-    if errorlevel 1 (
-        echo ERROR: Failed to install frontend dependencies
-        echo Please check your internet connection and try again
-        echo.
-        cd ..
-        pause
-        exit /b 1
-    )
-    cd ..
-)
-echo [OK] Frontend dependencies ready
-
-echo.
-echo Creating configuration files...
-if not exist ".env" (
-    if exist ".env.example" (
-        copy ".env.example" ".env" >nul
-    ) else (
-        echo QWEN_API_KEY=your_qwen_api_key_here > .env
-        echo QWEN_VL_API_KEY=your_qwen_vl_api_key_here >> .env
-    )
-    echo [INFO] Created .env file - please edit it and add your API keys
-)
-
-echo.
 echo Creating necessary directories...
 if not exist "uploads" mkdir uploads
 if not exist "pages" mkdir pages
@@ -135,14 +88,12 @@ if not exist "llm_logs" mkdir llm_logs
 if not exist "board_logs" mkdir board_logs
 
 echo.
-echo ==========================================
-echo    Starting WhatNote Services
-echo ==========================================
+echo Starting services...
 echo.
 
 REM Start backend service
 echo Starting backend API server...
-start "WhatNote Backend" cmd /k "echo Starting backend server... && python main.py || pause"
+start "WhatNote Backend" cmd /k "python main.py"
 
 REM Wait for backend
 echo Waiting for backend to start...
@@ -150,26 +101,12 @@ timeout /t 3 /nobreak >nul
 
 REM Start frontend service
 echo Starting frontend React app...
-start "WhatNote Frontend" cmd /k "echo Starting frontend app... && cd frontend && npm start || pause"
-
-REM Wait and open browser
-echo Waiting for services to initialize...
-timeout /t 8 /nobreak >nul
-echo Opening browser...
-start "" "http://localhost:3000"
+start "WhatNote Frontend" cmd /k "cd frontend && npm start"
 
 echo.
-echo ==========================================
-echo    Services Started Successfully!
-echo ==========================================
-echo.
-echo Service URLs:
-echo   Frontend: http://localhost:3000
-echo   Backend:  http://127.0.0.1:8000
-echo   API Docs: http://127.0.0.1:8000/docs
-echo.
-echo Two new windows should have opened for the services
-echo If any service fails, check the respective window for errors
+echo Services are starting...
+echo Backend: http://127.0.0.1:8000
+echo Frontend: http://localhost:3000
 echo.
 echo Press any key to exit this launcher...
 pause 
