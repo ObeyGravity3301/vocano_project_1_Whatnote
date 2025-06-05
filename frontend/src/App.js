@@ -4167,43 +4167,17 @@ function App() {
       <Header className="app-header">
         <div className="logo">WhatNote - 智能笔记系统</div>
         <div className="header-buttons">
-          <Tooltip title="快捷键帮助 (Ctrl+/)">
+          <Tooltip title="快捷键提示">
             <Button
               icon={<QuestionCircleOutlined />}
               onClick={() => {
-                // 触发快捷键帮助
-                const event = new KeyboardEvent('keydown', {
-                  key: '/',
-                  ctrlKey: true,
-                  bubbles: true
-                });
+                const event = new CustomEvent('whatnote-show-shortcuts');
                 window.dispatchEvent(event);
               }}
               size="small"
               style={{ marginRight: 8 }}
             >
               快捷键
-            </Button>
-          </Tooltip>
-          <Tooltip title="测试并发处理">
-            <Button
-              icon={<ArrowsAltOutlined />}
-              onClick={handleConcurrentAnnotationTest}
-              size="small"
-              style={{ marginRight: 8 }}
-            >
-              测试并发
-            </Button>
-          </Tooltip>
-          <Tooltip title="清理多余PDF展板文件">
-            <Button
-              icon={<DeleteOutlined />}
-              onClick={handleCleanupDuplicatePdfFiles}
-              size="small"
-              style={{ marginRight: 8 }}
-              type="default"
-            >
-              清理重复
             </Button>
           </Tooltip>
           <Tooltip title="打开管家助手 (Ctrl+B)">
@@ -4216,18 +4190,6 @@ function App() {
               style={{ marginRight: 8 }}
             >
               管家助手
-            </Button>
-          </Tooltip>
-          <Tooltip title="调试面板">
-            <Button
-              icon={<BugOutlined />}
-              onClick={() => setDebugPanelVisible(!debugPanelVisible)}
-              type={debugPanelVisible ? "primary" : "default"}
-              danger={debugPanelVisible}
-              shape="round"
-              size="small"
-            >
-              调试面板
             </Button>
           </Tooltip>
         </div>
