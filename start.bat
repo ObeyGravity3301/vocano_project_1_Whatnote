@@ -1,25 +1,24 @@
 @echo off
-chcp 65001 >nul
-title WhatNote 快速启动
+title WhatNote Quick Start
 
 echo.
-echo 🚀 WhatNote 快速启动脚本
+echo WhatNote Quick Start Script
 echo.
 
-:: 启动后端服务
-echo 🔧 启动后端API服务...
+:: Start backend service
+echo Starting backend API server...
 start "WhatNote Backend" cmd /k "python main.py"
 
-:: 等待3秒
+:: Wait 3 seconds
 timeout /t 3 /nobreak >nul
 
-:: 启动前端服务
-echo 🎨 启动前端React应用...
+:: Start frontend service
+echo Starting frontend React app...
 start "WhatNote Frontend" cmd /k "cd frontend && npm start"
 
 echo.
-echo ✅ 服务启动完成！
-echo    - 后端：http://127.0.0.1:8000
-echo    - 前端：http://localhost:3000
+echo Services started successfully!
+echo    - Backend: http://127.0.0.1:8000
+echo    - Frontend: http://localhost:3000
 echo.
 pause 

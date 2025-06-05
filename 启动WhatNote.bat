@@ -1,126 +1,123 @@
 @echo off
-chcp 65001 >nul
-title WhatNote 智能学习助手
+title WhatNote Launcher
 
 echo.
 echo ========================================
-echo    🚀 WhatNote 智能学习助手启动器
+echo    WhatNote Smart Learning Assistant
 echo ========================================
 echo.
 
-:: 检查Node.js是否安装
+:: Check Node.js installation
 node --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ 错误：未找到Node.js，请先安装Node.js
+    echo Error: Node.js not found, please install Node.js first
     pause
     exit /b 1
 )
 
-:: 检查npm是否安装
+:: Check npm installation
 npm --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ 错误：未找到npm，请先安装Node.js和npm
+    echo Error: npm not found, please install Node.js and npm first
     pause
     exit /b 1
 )
 
-:: 检查Python是否安装
+:: Check Python installation
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo ❌ 错误：未找到Python，请先安装Python 3.8+
+    echo Error: Python not found, please install Python 3.8+
     pause
     exit /b 1
 )
 
-:: 检查Python依赖是否安装
-echo 📦 检查Python依赖包...
+:: Check Python dependencies
+echo Checking Python dependencies...
 python -c "import fastapi, openai, fitz" >nul 2>&1
 if errorlevel 1 (
-    echo ⚠️  正在安装Python依赖包...
+    echo Installing Python dependencies...
     pip install -r requirements.txt
     if errorlevel 1 (
-        echo ❌ 依赖安装失败，请手动运行: pip install -r requirements.txt
+        echo Failed to install dependencies, please run manually: pip install -r requirements.txt
         pause
         exit /b 1
     )
 )
 
-:: 检查前端依赖是否安装
+:: Check frontend dependencies
 if not exist "frontend\node_modules" (
-    echo 📦 安装前端依赖包...
+    echo Installing frontend dependencies...
     cd frontend
     npm install
     if errorlevel 1 (
-        echo ❌ 前端依赖安装失败，请手动运行: cd frontend && npm install
+        echo Failed to install frontend dependencies, please run manually: cd frontend && npm install
         pause
         exit /b 1
     )
     cd ..
 )
 
-:: 检查.env文件
+:: Check .env file
 if not exist ".env" (
-    echo ⚠️  未找到.env配置文件，正在创建...
+    echo Creating .env configuration file...
     copy ".env.example" ".env" >nul 2>&1
-    echo ✅ 已创建.env文件，请编辑其中的API密钥
+    echo Please edit .env file and set your API keys:
+    echo    QWEN_API_KEY=your_qwen_api_key
+    echo    QWEN_VL_API_KEY=your_qwen_vl_api_key
     echo.
-    echo 📝 请在.env文件中设置以下密钥：
-    echo    QWEN_API_KEY=你的通义千问API密钥
-    echo    QWEN_VL_API_KEY=你的通义千问视觉API密钥
-    echo.
-    echo 按任意键继续启动（无API密钥时部分功能不可用）...
+    echo Press any key to continue...
     pause >nul
 )
 
-:: 创建必要目录
+:: Create necessary directories
 if not exist "uploads" mkdir uploads
 if not exist "pages" mkdir pages
 if not exist "logs" mkdir logs
 if not exist "llm_logs" mkdir llm_logs
 if not exist "board_logs" mkdir board_logs
 
-echo ✅ 环境检查完成
+echo Environment check completed
 echo.
 
-:: 启动服务
-echo 🚀 正在启动WhatNote服务...
+:: Start services
+echo Starting WhatNote services...
 echo.
-echo 📍 服务地址：
-echo    前端React应用：http://localhost:3000
-echo    后端API服务：http://127.0.0.1:8000
-echo    API文档：http://127.0.0.1:8000/docs
+echo Service URLs:
+echo    Frontend React App: http://localhost:3000
+echo    Backend API Server: http://127.0.0.1:8000
+echo    API Documentation: http://127.0.0.1:8000/docs
 echo.
-echo 💡 提示：
-echo    - 前端和后端将并行启动
-echo    - 按 Ctrl+C 停止任一服务
-echo    - 服务启动后会自动打开浏览器
-echo    - 如遇问题请查看控制台输出
+echo Tips:
+echo    - Frontend and backend will start in parallel
+echo    - Press Ctrl+C to stop any service
+echo    - Browser will open automatically
+echo    - Check console output for any issues
 echo.
 
-:: 启动后端服务（在新窗口中）
-echo 🔧 启动后端API服务...
+:: Start backend service in new window
+echo Starting backend API server...
 start "WhatNote Backend" cmd /c "python main.py & pause"
 
-:: 等待后端启动
-echo ⏱️  等待后端服务启动...
+:: Wait for backend to start
+echo Waiting for backend service to start...
 timeout /t 5 /nobreak >nul
 
-:: 启动前端服务（在新窗口中）
-echo 🎨 启动前端React应用...
+:: Start frontend service in new window
+echo Starting frontend React app...
 start "WhatNote Frontend" cmd /c "cd frontend && npm start & pause"
 
-:: 延迟10秒后打开浏览器
-echo 🌐 准备打开浏览器...
+:: Open browser after delay
+echo Preparing to open browser...
 timeout /t 10 /nobreak >nul
 start "" "http://localhost:3000"
 
 echo.
-echo ✅ WhatNote前后端服务已启动完成！
+echo WhatNote services started successfully!
 echo.
-echo 📋 服务状态：
-echo    - 前端：http://localhost:3000 （React开发服务器）
-echo    - 后端：http://127.0.0.1:8000 （FastAPI服务器）
+echo Service Status:
+echo    - Frontend: http://localhost:3000 (React Development Server)
+echo    - Backend: http://127.0.0.1:8000 (FastAPI Server)
 echo.
-echo 🔄 如需重启服务，请关闭相应窗口后重新运行此脚本
+echo To restart services, close the respective windows and run this script again
 echo.
 pause 
