@@ -1,0 +1,79 @@
+.textbox-window {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background-color: white;
+  overflow: hidden;
+}
+
+.textbox-content {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.textbox-edit-mode {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.textbox-view-mode {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.textbox-display {
+  flex: 1;
+  transition: all 0.2s ease;
+}
+
+.textbox-display:hover {
+  border-color: #1890ff !important;
+  background-color: #f0f8ff !important;
+}
+
+.textbox-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-shrink: 0;
+}
+
+.textbox-info {
+  padding: 8px 16px;
+  border-top: 1px solid #f0f0f0;
+  background-color: #fafafa;
+  flex-shrink: 0;
+}
+
+.textbox-window .ant-input {
+  border: 1px solid #d9d9d9;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.textbox-window .ant-input:focus {
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.textbox-window .ant-btn {
+  border-radius: 4px;
+}
+
+/* 确保文本框内容能够正确显示 */
+.textbox-display {
+  word-wrap: break-word;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 14px;
+}
+
+/* 编辑模式下的文本域样式 */
+.textbox-edit-mode .ant-input {
+  resize: vertical;
+  min-height: 60px;
+} 

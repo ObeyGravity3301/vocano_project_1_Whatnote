@@ -342,6 +342,8 @@ async def post_force_vision_annotation(
                         improve_request=improve_request,
                         board_id=board_id
                     )
+                except Exception as e:
+                    pass
                 finally:
                     # 恢复原始设置
                     expert.set_annotation_style(original_style, original_custom)
@@ -489,12 +491,16 @@ async def ask_pdf_question_stream(websocket: WebSocket, filename: str):
         logger.error(f"流式问答失败: {str(e)}")
         try:
             await websocket.send_json({"error": f"处理请求失败: {str(e)}"})
+        except Exception as e:
+            pass
         except:
             # 连接可能已关闭
             pass
     finally:
         try:
             await websocket.close()
+        except Exception as e:
+            pass
         except:
             pass
 
@@ -574,6 +580,8 @@ async def view_material_file(filename: str):
         
         file_path = os.path.join(UPLOAD_DIR, file_check["path"])
         return FileResponse(file_path, filename=file_check["path"])
+    except Exception as e:
+        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -686,15 +694,42 @@ async def get_app_state():
     """获取应用当前状态"""
     logger.info("获取应用状态")
     
-    # 注意：为了确保前端能访问到课程文件，确保每个课程都有files字段
+    # 获取课程文件夹和展板数据
     course_folders = app_state.get_course_folders()
+    all_boards = app_state.get_boards()
+    
+    # 🔧 修复：将展板数据合并到对应课程的files字段中
     for folder in course_folders:
+        # 确保每个课程都有files字段
         if 'files' not in folder:
             folder['files'] = []
+        
+        # 查找属于当前课程的展板
+        course_name = folder.get('name', '')
+        course_boards = [board for board in all_boards 
+                        if board.get('course_folder') == course_name]
+        
+        # 将展板转换为前端期望的文件格式并添加到files中
+        for board in course_boards:
+            file_entry = {
+                'id': board.get('id'),
+                'name': board.get('name'),
+                'type': 'board',  # 标记为展板类型
+                'course_id': folder.get('id'),
+                'course_name': course_name,
+                'created_at': board.get('created_at'),
+                'pdfs': board.get('pdfs', 0),
+                'windows': board.get('windows', 0)
+            }
+            
+            # 检查是否已经存在（避免重复）
+            existing_ids = [f.get('id') for f in folder['files']]
+            if board.get('id') not in existing_ids:
+                folder['files'].append(file_entry)
     
     return {
         'course_folders': course_folders,
-        'boards': app_state.get_boards(),
+        'boards': all_boards,  # 保留原始展板数据（向后兼容）
         'pdfs': [],  # 可以根据需要添加更多信息
     }
 
@@ -861,6 +896,8 @@ async def remove_board_window(board_id: str, window_id: str):
         
         logger.info(f'窗口移除成功: {window_id}')
         return {"success": True}
+    except Exception as e:
+        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -889,6 +926,8 @@ async def update_board_window(
         
         logger.info(f'窗口更新成功: {window_id}')
         return {"success": True}
+    except Exception as e:
+        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -1218,6 +1257,8 @@ async def delete_course_folder(course_id: str):
             else:
                 logger.info(f"✅ 验证通过：课程 {course_id} 已彻底删除")
                 
+        except Exception as e:
+            pass
         except Exception as verify_error:
             logger.error(f"验证删除结果时出错: {str(verify_error)}")
         
@@ -1342,6 +1383,8 @@ async def delete_course_file(file_id: str):
                 raise HTTPException(status_code=500, detail="删除操作未能持久化")
             else:
                 logger.info(f"✅ 验证通过：文件 {file_id} 已彻底删除")
+        except Exception as e:
+            pass
         except Exception as verify_error:
             logger.error(f"验证删除结果时出错: {str(verify_error)}")
         
@@ -1413,6 +1456,8 @@ async def rename_course_folder(course_id: str, request_data: dict = Body(...)):
             }
         }
         
+    except Exception as e:
+        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -1471,6 +1516,8 @@ async def rename_course_file(file_id: str, request_data: dict = Body(...)):
             }
         }
         
+    except Exception as e:
+        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -1517,57 +1564,59 @@ async def expert_llm_query(request_data: dict = Body(...)):
             content={"detail": f"处理查询失败: {str(e)}"}
         )
 
-# 添加获取单个展板信息的API端点
 @app.get('/api/boards/{board_id}')
 async def get_board_info(board_id: str):
     """获取展板详细信息"""
     logger.info(f"获取展板信息: {board_id}")
     try:
-        # 从board_logger获取展板详细信息
-        board_info = board_logger.get_full_board_info(board_id)
+        # 直接从文件系统读取最新数据，避免缓存问题
+        log_path = board_logger.get_log_path(board_id)
+        board_info = None
         
-        if not board_info:
-            # 如果board_logger中没有找到，尝试从app_state中查找
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r', encoding='utf-8') as f:
+                    board_info = json.load(f)
+                logger.info(f"直接从文件加载展板 {board_id} 数据，窗口数量: {len(board_info.get('windows', []))}")
+            except Exception as e:
+                logger.error(f"读取展板日志文件失败: {str(e)}")
+        
+        if board_info:
+            # 如果找到了文件数据，直接返回
+            return board_info
+        
+        # 如果没有文件数据，尝试从app_state中查找基本信息
             global app_state
             for board in app_state.get_boards():
                 if board["id"] == board_id:
-                    # 如果在app_state中找到，但没有详细信息，创建一个基本信息结构
+                # 构建基本信息结构
                     board_info = {
                         "id": board_id,
                         "name": board.get("name", "未命名展板"),
-                        "state": "empty",  # 新展板状态为空
-                        "created_at": board.get("created_at"),
-                        "pdfs": [],  # 新展板没有PDF文件
-                        "windows": [],  # 新展板没有窗口
+                    "state": "active",
+                    "created_at": board.get("created_at", datetime.now().isoformat()),
+                    "pdfs": [],
+                    "windows": [],
+                    "operations": [],
                         "course_folder": board.get("course_folder")
                     }
-                    # 初始化展板日志（这会清除任何旧数据）
-                    board_logger.init_board(board_id)
-                    logger.info(f"已为展板 {board_id} 创建空白状态")
-                    break
+                logger.info(f"为展板 {board_id} 返回基本信息结构（从app_state）")
+                return board_info
         
-        if not board_info:
-            # 如果找不到展板信息，创建新的空展板
+        # 如果在app_state中也找不到，返回默认结构
             board_info = {
                 "id": board_id,
-                "name": "自动创建展板",
-                "state": "empty",  # 新展板状态为空
-                "created_at": None,
-                "pdfs": [],  # 新展板没有PDF文件
-                "windows": [],  # 新展板没有窗口
+            "name": "未知展板",
+            "state": "active",
+            "created_at": datetime.now().isoformat(),
+            "pdfs": [],
+            "windows": [],
+            "operations": [],
                 "course_folder": None
             }
-            # 初始化展板日志（这会清除任何旧数据）
-            board_logger.init_board(board_id)
-            logger.info(f"已自动创建空白展板 {board_id}")
-        else:
-            # 验证展板状态，如果是新创建的展板但有旧数据，清除它
-            if board_info.get("state") == "empty" and (board_info.get("pdfs") or board_info.get("windows")):
-                logger.warning(f"检测到展板 {board_id} 状态不一致，重新初始化")
-                board_logger.init_board(board_id)
-                board_info = board_logger.get_full_board_info(board_id)
-        
+        logger.info(f"为未知展板 {board_id} 返回默认信息结构")
         return board_info
+        
     except Exception as e:
         logger.error(f"获取展板信息失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取展板信息失败: {str(e)}")
@@ -1686,6 +1735,8 @@ async def update_board_context(board_id: str, context_data: dict = Body(...)):
         # 向简化专家LLM发送详细的上下文更新
         try:
             await expert.process_query(f"[系统上下文更新]\n{update_message}")
+        except Exception as e:
+            pass
         except Exception as update_error:
             logger.warning(f"发送上下文更新到专家LLM失败: {str(update_error)}")
         
@@ -1768,6 +1819,8 @@ async def assistant_stream(websocket: WebSocket):
         if websocket_active:
             try:
                 await websocket.send_json({"error": f"处理请求时出错: {str(e)}"})
+            except Exception as e:
+                pass
             except:
                 # 连接可能已关闭
                 pass
@@ -1775,6 +1828,8 @@ async def assistant_stream(websocket: WebSocket):
         websocket_active = False
         try:
             await websocket.close()
+        except Exception as e:
+            pass
         except:
             pass
 
@@ -1821,6 +1876,8 @@ async def expert_stream(websocket: WebSocket):
                 
             logger.info(f"专家LLM查询完成: 展板 {board_id}")
             
+        except Exception as e:
+            pass
         except Exception as process_error:
             error_msg = f"分析失败: {str(process_error)}"
             logger.error(f"专家LLM处理失败: {str(process_error)}", exc_info=True)
@@ -1835,12 +1892,16 @@ async def expert_stream(websocket: WebSocket):
         if websocket_active:
             try:
                 await websocket.send_json({"error": f"处理请求时出错: {str(e)}"})
+            except Exception as e:
+                pass
             except:
                 pass
     finally:
         websocket_active = False
         try:
             await websocket.close()
+        except Exception as e:
+            pass
         except:
             pass
 
@@ -1895,6 +1956,8 @@ async def intelligent_expert_stream(websocket: WebSocket):
                 
             logger.info(f"智能专家LLM查询完成: 展板 {board_id}")
             
+        except Exception as e:
+            pass
         except Exception as process_error:
             error_msg = f"智能分析失败: {str(process_error)}"
             logger.error(f"智能专家LLM处理失败: {str(process_error)}", exc_info=True)
@@ -1910,12 +1973,16 @@ async def intelligent_expert_stream(websocket: WebSocket):
         if websocket_active:
             try:
                 await websocket.send_json({"error": f"处理请求时出错: {str(e)}"})
+            except Exception as e:
+                pass
             except:
                 pass
     finally:
         websocket_active = False
         try:
             await websocket.close()
+        except Exception as e:
+            pass
         except:
             pass
 
@@ -2059,18 +2126,6 @@ async def api_improve_annotation(
                 board_id=board_id
             )
             return {"improved_annotation": result.get("note")}
-        else:
-            # 使用improve_note改进现有注释
-            from controller import improve_note
-            result = improve_note(
-                filename, 
-                current_annotation, 
-                [page_text], 
-                improve_request, 
-                session_id, 
-                board_id
-            )
-            return {"improved_annotation": result.get("improved_note")}
     except Exception as e:
         logger.error(f"改进注释失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"改进注释失败: {str(e)}")
@@ -2120,17 +2175,6 @@ async def get_dynamic_task_result(task_id: str):
             logger.info(f"🎯 [RESULT-QUERY] 查询完成，总耗时: {total_query_time:.3f}s")
             
             return response
-        else:
-            logger.warning(f"❓ [RESULT-QUERY] 任务结果未找到: {task_id}，搜索耗时: {search_time:.3f}s")
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "detail": f"任务结果不存在: {task_id}",
-                    "task_id": task_id,
-                    "expert_count": len(simple_expert_manager.experts),
-                    "search_time": search_time
-                }
-            )
             
     except Exception as e:
         error_time = time.time() - query_start_time
@@ -2202,7 +2246,6 @@ async def submit_generate_pdf_note_task(request_data: dict = Body(...)):
         
         if task_id:
             logger.info(f"✅ [PDF-NOTE] PDF笔记生成任务提交成功: {task_id}")
-            
             return {
                 "status": "success",
                 "board_id": board_id,
@@ -2303,7 +2346,6 @@ async def submit_dynamic_task(request_data: dict = Body(...)):
         if task_id:
             total_submit_time = time.time() - submit_start_time
             logger.info(f"✅ [TASK-SUBMIT] 任务提交成功: {task_id}, 总耗时: {total_submit_time:.3f}s (专家: {expert_time:.3f}s, 提交: {task_submit_time:.3f}s)")
-            
             return {
                 "status": "success",
                 "board_id": board_id,
@@ -2440,6 +2482,8 @@ async def delete_pdf_file(pdf_filename: str, board_id: str = Query(None)):
                             page_part = f.replace(f"{base_name}_page_", "").replace('.txt', '')
                             int(page_part)  # 验证是数字
                             page_files.append(f)
+                        except Exception as e:
+                            pass
                         except ValueError:
                             # 如果不是数字，跳过
                             continue
@@ -2638,6 +2682,8 @@ async def task_events_stream(board_id: str):
             if self.connected:
                 try:
                     await self.queue.put(event_data)
+                except Exception as e:
+                    pass
                 except asyncio.QueueFull:
                     logger.warning(f"📻 [SSE] 事件队列已满，丢弃事件: {board_id}")
         
@@ -2661,6 +2707,8 @@ async def task_events_stream(board_id: str):
                         event_data = await asyncio.wait_for(self.queue.get(), timeout=30.0)
                         event_json = json.dumps(event_data, ensure_ascii=False)
                         yield f"data: {event_json}\n\n"
+                    except Exception as e:
+                        pass
                     except asyncio.TimeoutError:
                         # 发送心跳包
                         heartbeat = {
@@ -2670,7 +2718,6 @@ async def task_events_stream(board_id: str):
                         yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
                     except Exception as e:
                         logger.error(f"📻 [SSE] 事件生成错误: {str(e)}")
-                        break
                         
             except Exception as e:
                 logger.error(f"📻 [SSE] 事件流异常: {str(e)}")
@@ -2697,6 +2744,8 @@ async def task_events_stream(board_id: str):
             }
         )
         return response
+    except Exception as e:
+        pass
     finally:
         # 清理订阅
         subscriber.connected = False
@@ -2767,12 +2816,13 @@ async def get_board_annotation_style(board_id: str):
         )
 
 # 控制台API端点
-@app.post('/butler/console')
+@app.post('/api/butler/console')
 async def butler_console_command(request_data: dict = Body(...)):
-    """处理控制台命令"""
+    """处理控制台命令 - 直接命令处理，不经过LLM"""
     try:
         command = request_data.get('command', '').strip()
-        multi_step_context = request_data.get('multi_step_context')
+        # 🔧 修复：支持both current_path and multi_step_context参数
+        current_path = request_data.get('current_path') or request_data.get('multi_step_context', {})
         
         if not command:
             return JSONResponse(
@@ -2780,26 +2830,12 @@ async def butler_console_command(request_data: dict = Body(...)):
                 content={"detail": "命令不能为空"}
             )
         
-        logger.info(f"🖥️ [CONSOLE] 收到命令: {command}")
+        logger.info(f"🖥️ [CONSOLE] 直接执行命令: {command}")
+        if current_path:
+            logger.info(f"🖥️ [CONSOLE] 路径上下文: {current_path}")
         
-        # 如果有多步操作上下文，恢复到管家LLM
-        if multi_step_context:
-            butler_llm.multi_step_context = multi_step_context
-        
-        # 处理命令
-        response = butler_llm.process_user_request(command)
-        
-        # 解析响应中的function calls
-        function_calls = []
-        if hasattr(butler_llm, 'last_function_calls'):
-            function_calls = butler_llm.last_function_calls
-        
-        result = {
-            "response": response,
-            "type": "response",
-            "function_calls": function_calls,
-            "multi_step_context": butler_llm.multi_step_context if butler_llm.multi_step_context.get("active") else None
-        }
+        # 直接解析和执行命令
+        result = await execute_direct_command(command, current_path)
         
         return {
             "status": "success",
@@ -2813,7 +2849,1289 @@ async def butler_console_command(request_data: dict = Body(...)):
             content={"detail": f"命令处理失败: {str(e)}"}
         )
 
-@app.get('/butler/status')
+async def execute_direct_command(command: str, current_path: dict = None):
+    """直接执行控制台命令，不经过LLM"""
+    try:
+        # 分割命令和参数
+        parts = command.strip().split()
+        if not parts:
+            return {
+                "response": "请输入命令", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        cmd = parts[0].lower()
+        args = parts[1:]
+        
+        # 处理各种命令
+        if cmd == "ls" or cmd == "list":
+            return await handle_ls_command(args, current_path)
+        elif cmd == "pwd":
+            return handle_pwd_command(current_path)
+        elif cmd == "cd":
+            return await handle_cd_command(args, current_path)
+        elif cmd == "help":
+            return handle_help_command(args, current_path)
+        elif cmd == "clear":
+                return {
+                "response": "clear", 
+                "type": "clear",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        elif cmd == "history":
+            return {
+                "response": "命令历史功能需要前端配合实现", 
+                "type": "info",
+                "style": "color: #ffd43b; background: transparent;"
+            }
+        elif cmd == "status":
+            return await handle_status_command(args)
+        elif cmd == "exit":
+            return {
+                "response": "关闭控制台", 
+                "type": "exit",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        elif cmd == "tree":
+            return await handle_tree_command(args)
+        elif cmd == "find":
+            return await handle_find_command(args)
+        elif cmd == "search":
+            return await handle_search_command(args)
+        elif cmd == "stats":
+            return await handle_stats_command(args)
+        elif cmd == "recent":
+            return await handle_recent_command(args)
+        elif cmd == "backup":
+            return await handle_backup_command(args, current_path)
+        elif cmd == "export":
+            return await handle_export_command(args, current_path)
+        elif cmd == "delete":
+            return await handle_delete_command(args, current_path)
+        elif cmd == "rename":
+            return await handle_rename_command(args, current_path)
+        elif cmd == "info":
+            return await handle_info_command(args, current_path)
+        elif cmd == "copy":
+            return await handle_copy_command(args, current_path)
+        elif cmd == "goto":
+            return await handle_goto_command(args, current_path)
+        elif cmd == "next":
+            return await handle_next_command(args, current_path)
+        elif cmd == "prev":
+            return await handle_prev_command(args, current_path)
+        elif cmd == "first":
+            return await handle_first_command(args, current_path)
+        elif cmd == "last":
+            return await handle_last_command(args, current_path)
+        elif cmd == "pages":
+            return await handle_pages_command(args, current_path)
+        elif cmd == "annotate":
+            return await handle_annotate_command(args, current_path)
+        elif cmd == "annotation":
+            return await handle_annotation_command(args, current_path)
+        elif cmd == "page":
+            return await handle_page_command(args, current_path)
+        elif cmd == "window":
+            return await handle_window_command(args, current_path)
+        elif cmd == "layout":
+            return await handle_layout_command(args, current_path)
+        elif cmd == "config":
+            return await handle_config_command(args)
+        elif cmd == "log":
+            return await handle_log_command(args)
+        elif cmd == "cache":
+            return await handle_cache_command(args)
+        elif cmd == "refresh":
+            return await handle_refresh_command(args)
+        elif cmd == "version":
+            return handle_version_command(args)
+        elif cmd == "quota":
+            return await handle_quota_command(args)
+        
+        # 课程操作命令
+        elif cmd == "course" and len(args) > 0:
+            return await handle_course_command(args)
+        
+        # 展板操作命令  
+        elif cmd == "board" and len(args) > 0:
+            return await handle_board_command(args, current_path)
+        
+        # PDF操作命令
+        elif cmd == "pdf" and len(args) > 0:
+            return await handle_pdf_command(args, current_path)
+        
+        # 笔记操作命令
+        elif cmd == "note" and len(args) > 0:
+            return await handle_note_command(args, current_path)
+        
+        else:
+            return {
+                "response": f"未知命令: {cmd}\n输入 'help' 查看可用命令",
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+            
+    except Exception as e:
+        logger.error(f"🖥️ [CONSOLE] 直接命令执行失败: {str(e)}")
+        return {
+            "response": f"命令执行失败: {str(e)}",
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_ls_command(args, current_path):
+    """处理ls命令 - 与实际文件系统同步"""
+    path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+    
+    if path_type == 'root':
+        # 在根目录，显示课程文件夹和全局信息
+        course_folders = app_state.get_course_folders()
+        
+        response = f"📁 课程文件夹 ({len(course_folders)}):\n"
+        for i, folder in enumerate(course_folders, 1):
+            boards = app_state.get_boards()
+            board_count = len([b for b in boards if b.get('course_folder') == folder['name']])
+            response += f"  {i}. {folder['name']} ({board_count} 个展板)\n"
+        
+        # 显示全局PDF文件
+        uploads_dir = "uploads"
+        if os.path.exists(uploads_dir):
+            pdf_files = [f for f in os.listdir(uploads_dir) if f.endswith('.pdf')]
+            if pdf_files:
+                response += f"\n📄 PDF文件 ({len(pdf_files)}):\n"
+                for i, pdf in enumerate(pdf_files[:5], 1):  # 只显示前5个
+                    response += f"  {i}. {pdf}\n"
+                if len(pdf_files) > 5:
+                    response += f"  ... 还有 {len(pdf_files) - 5} 个文件\n"
+        
+        return {
+            "response": response,
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    elif path_type == 'course':
+        course_name = current_path.get('context', {}).get('courseName', '')
+        boards = app_state.get_boards()
+        course_boards = [b for b in boards if b.get('course_folder') == course_name]
+        
+        if course_boards:
+            response = f"📋 课程 '{course_name}' 的展板 ({len(course_boards)}):\n"
+            for i, board in enumerate(course_boards, 1):
+                response += f"  {i}. {board['name']}\n"
+        else:
+            response = f"📋 课程 '{course_name}' 暂无展板"
+        
+        return {
+            "response": response,
+            "type": "info", 
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    elif path_type == 'board':
+        board_name = current_path.get('context', {}).get('boardName', '')
+        course_name = current_path.get('context', {}).get('courseName', '')
+        
+        # 获取展板的窗口和PDF
+        boards = app_state.get_boards()
+        current_board = None
+        for board in boards:
+            if board.get('name') == board_name and board.get('course_folder') == course_name:
+                current_board = board
+                break
+            
+        if current_board:
+            board_id = current_board.get('id')
+            response = f"🪟 展板 '{board_name}' 内容:\n"
+            
+            # 显示窗口
+            try:
+                from board_logger import BoardLogger
+                board_logger = BoardLogger()
+                log_data = board_logger.load_log(board_id)
+                windows = log_data.get("windows", [])
+                
+                if windows:
+                    response += f"\n📋 窗口 ({len(windows)}):\n"
+                    for i, window in enumerate(windows, 1):
+                        window_type = window.get("type", "")
+                        title = window.get("title", "")
+                        response += f"  {i}. [{window_type}] {title}\n"
+                else:
+                    response += "\n📋 暂无窗口\n"
+            except Exception as e:
+                pass
+            except Exception:
+                response += "\n📋 无法获取窗口信息\n"
+            
+            # 显示PDF文件
+            try:
+                if os.path.exists("board_data.json"):
+                    with open("board_data.json", 'r', encoding='utf-8') as f:
+                        board_data = json.load(f)
+                        if board_data.get('board_id') == board_id:
+                            pdfs = board_data.get('pdfs', [])
+                            if pdfs:
+                                response += f"\n📄 PDF文件 ({len(pdfs)}):\n"
+                                for i, pdf in enumerate(pdfs, 1):
+                                    filename = pdf.get('filename', '')
+                                    current_page = pdf.get('currentPage', 1)
+                                    response += f"  {i}. {filename} (页: {current_page})\n"
+                            else:
+                                response += "\n📄 暂无PDF文件\n"
+            except Exception as e:
+                pass
+            except Exception:
+                response += "\n📄 无法获取PDF信息\n"
+        else:
+            response = f"❌ 未找到展板 '{board_name}'"
+        
+        return {
+            "response": response,
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    else:
+        return {
+            "response": f"未知的路径类型: {path_type}",
+            "type": "error", 
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_cd_command(args, current_path):
+    """处理cd命令"""
+    if not args:
+        return {
+            "response": "用法: cd <目标目录>", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    target = ' '.join(args)  # 支持带空格的名称
+    
+    # 去掉外层引号（支持双引号和单引号）
+    if (target.startswith('"') and target.endswith('"')) or (target.startswith("'") and target.endswith("'")):
+        target = target[1:-1]
+    
+    if target == ".." or target == "..":
+        return {
+            "response": "返回上级目录",
+            "type": "navigation",
+            "style": "color: #74c0fc; background: transparent;",
+            "navigation": {"action": "go_back"}
+        }
+    elif target == "/" or target == "~" or target == "root":
+        return {
+            "response": "返回根目录",
+            "type": "navigation", 
+            "style": "color: #74c0fc; background: transparent;",
+            "navigation": {"action": "go_root"}
+        }
+    else:
+        # 检查目标是否存在
+        course_folders = app_state.get_course_folders()
+        boards = app_state.get_boards()
+        
+        # 检查是否是课程文件夹 - 支持精确匹配和模糊匹配
+        for folder in course_folders:
+            if folder['name'] == target or folder['name'].lower() == target.lower():
+                return {
+                    "response": f"进入课程: {folder['name']}",
+                    "type": "navigation",
+                    "style": "color: #74c0fc; background: transparent;",
+                    "navigation": {
+                        "action": "enter_course",
+                        "course_name": folder['name'],
+                        "course_id": folder['id']
+                    }
+                }
+        
+        # 检查是否是展板 - 支持精确匹配和模糊匹配
+        for board in boards:
+            if board['name'] == target or board['name'].lower() == target.lower():
+                return {
+                    "response": f"进入展板: {board['name']}",
+                    "type": "navigation",
+                    "style": "color: #74c0fc; background: transparent;",
+                    "navigation": {
+                        "action": "enter_board", 
+                        "board_name": board['name'],
+                        "board_id": board['id']
+                    }
+                }
+        
+        # 提供建议
+        suggestions = []
+        for folder in course_folders:
+            if target.lower() in folder['name'].lower():
+                suggestions.append(folder['name'])
+        for board in boards:
+            if target.lower() in board['name'].lower():
+                suggestions.append(board['name'])
+        
+        error_msg = f"找不到目录: {target}"
+        if suggestions:
+            error_msg += f"\n相似的目录: {', '.join(suggestions[:3])}"
+        
+        return {
+            "response": error_msg, 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+def handle_pwd_command(current_path):
+    """处理pwd命令"""
+    if not current_path or 'context' not in current_path:
+        return {
+            "response": "当前路径: / (根目录)", 
+            "type": "info",
+            "style": "color: #74c0fc; background: transparent;"
+        }
+    
+    context = current_path['context']
+    path_type = context.get('type', 'root')
+    
+    if path_type == 'course':
+        course_name = context.get('courseName', '未知课程')
+        return {
+            "response": f"当前路径: /{course_name}/ (课程目录)", 
+            "type": "info",
+            "style": "color: #74c0fc; background: transparent;"
+        }
+    elif path_type == 'board':
+        course_name = context.get('courseName', '未知课程')
+        board_name = context.get('boardName', '未知展板')
+        return {
+            "response": f"当前路径: /{course_name}/{board_name}/ (展板目录)", 
+            "type": "info",
+            "style": "color: #74c0fc; background: transparent;"
+        }
+    elif path_type == 'pdf':
+        course_name = context.get('courseName', '未知课程')
+        board_name = context.get('boardName', '未知展板')
+        pdf_name = context.get('pdfName', '未知PDF')
+        return {
+            "response": f"当前路径: /{course_name}/{board_name}/{pdf_name} (PDF文件)", 
+            "type": "info",
+            "style": "color: #74c0fc; background: transparent;"
+        }
+    else:
+        return {
+            "response": "当前路径: / (根目录)", 
+            "type": "info",
+            "style": "color: #74c0fc; background: transparent;"
+        }
+
+async def handle_status_command(args):
+    """处理status命令"""
+    try:
+        # 获取系统状态信息
+        course_folders = app_state.get_course_folders()
+        boards = app_state.get_boards()
+        
+        # 扫描PDF文件
+        uploads_dir = "uploads"
+        pdf_count = 0
+        total_size = 0
+        
+        if os.path.exists(uploads_dir):
+            for file in os.listdir(uploads_dir):
+                if file.endswith('.pdf'):
+                    pdf_count += 1
+                    file_path = os.path.join(uploads_dir, file)
+                    if os.path.exists(file_path):
+                        total_size += os.path.getsize(file_path)
+        
+        # 格式化大小
+        def format_size(size_bytes):
+            if size_bytes == 0:
+                return "0 B"
+            size_names = ["B", "KB", "MB", "GB"]
+            import math
+            i = int(math.floor(math.log(size_bytes, 1024)))
+            p = math.pow(1024, i)
+            s = round(size_bytes / p, 2)
+            return f"{s} {size_names[i]}"
+        
+        if '-d' in args or '--detail' in args:
+            response = "📊 WhatNote 系统详细状态:\n\n"
+            response += f"📚 课程文件夹: {len(course_folders)} 个\n"
+            if course_folders:
+                for folder in course_folders[:5]:  # 显示前5个
+                    response += f"  - {folder['name']}\n"
+                if len(course_folders) > 5:
+                    response += f"  ... 还有 {len(course_folders) - 5} 个\n"
+            
+            response += f"\n📋 展板: {len(boards)} 个\n"
+            if boards:
+                for board in boards[:5]:  # 显示前5个
+                    course_info = f" [{board['course_folder']}]" if board.get('course_folder') else ""
+                    response += f"  - {board['name']}{course_info}\n"
+                if len(boards) > 5:
+                    response += f"  ... 还有 {len(boards) - 5} 个\n"
+            
+            response += f"\n📄 PDF文件: {pdf_count} 个\n"
+            response += f"💾 存储使用: {format_size(total_size)}\n"
+        else:
+            response = "📊 WhatNote 系统状态:\n"
+            response += f"📚 课程: {len(course_folders)} | 📋 展板: {len(boards)} | 📄 PDF: {pdf_count}\n"
+            response += f"💾 存储: {format_size(total_size)}"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+        
+    except Exception as e:
+        return {
+            "response": f"获取系统状态失败: {str(e)}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_course_command(args):
+    """处理course命令"""
+    if not args:
+        return {
+            "response": "用法: course <list|create|delete|rename|show> [名称]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "list":
+        course_folders = app_state.get_course_folders()
+        if course_folders:
+            response = f"📚 课程文件夹列表 ({len(course_folders)}):\n"
+            for i, folder in enumerate(course_folders, 1):
+                response += f"  {i}. {folder['name']} (ID: {folder['id']})\n"
+        else:
+            response = "暂无课程文件夹"
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    elif action == "create":
+        if len(args) < 2:
+            return {
+                "response": "用法: course create <课程名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        course_name = ' '.join(args[1:])  # 支持带空格的名称
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (course_name.startswith('"') and course_name.endswith('"')) or (course_name.startswith("'") and course_name.endswith("'")):
+            course_name = course_name[1:-1]
+        
+        # 检查是否已存在
+        if app_state.course_folder_exists(course_name):
+            return {
+                "response": f"课程文件夹 '{course_name}' 已存在", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 创建课程文件夹
+        folder = app_state.add_course_folder(course_name)
+        app_state.save_state()
+        
+        return {
+            "response": f"✅ 课程文件夹 '{course_name}' 创建成功", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True  # 通知前端需要刷新
+        }
+    
+    elif action == "delete":
+        if len(args) < 2:
+            return {
+                "response": "用法: course delete <课程名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        course_name = ' '.join(args[1:])
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (course_name.startswith('"') and course_name.endswith('"')) or (course_name.startswith("'") and course_name.endswith("'")):
+            course_name = course_name[1:-1]
+        
+        # 查找要删除的课程
+        course_folders = app_state.get_course_folders()
+        target_course = None
+        for folder in course_folders:
+            if folder['name'] == course_name or folder['name'].lower() == course_name.lower():
+                target_course = folder
+                break
+        
+        if not target_course:
+            return {
+                "response": f"找不到课程文件夹: {course_name}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 检查课程下是否有展板
+        boards = app_state.get_boards()
+        course_boards = [b for b in boards if b.get('course_folder') == course_name]
+        
+        if course_boards:
+            board_names = ', '.join([b['name'] for b in course_boards[:3]])
+            if len(course_boards) > 3:
+                board_names += f" 等{len(course_boards)}个展板"
+            return {
+                "response": f"无法删除课程 '{course_name}'，该课程下还有展板: {board_names}\n请先删除相关展板", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 删除课程文件夹
+        app_state.course_folders = [f for f in app_state.course_folders if f['id'] != target_course['id']]
+        app_state.save_state()
+        
+        return {
+            "response": f"✅ 课程文件夹 '{course_name}' 已删除", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True
+        }
+    
+    elif action == "rename":
+        if len(args) < 3:
+            return {
+                "response": "用法: course rename <旧名称> <新名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        old_name = args[1]
+        new_name = ' '.join(args[2:])
+        
+        # 去掉外层引号
+        if (old_name.startswith('"') and old_name.endswith('"')) or (old_name.startswith("'") and old_name.endswith("'")):
+            old_name = old_name[1:-1]
+        if (new_name.startswith('"') and new_name.endswith('"')) or (new_name.startswith("'") and new_name.endswith("'")):
+            new_name = new_name[1:-1]
+        
+        # 查找要重命名的课程
+        course_folders = app_state.get_course_folders()
+        target_course = None
+        for folder in course_folders:
+            if folder['name'] == old_name or folder['name'].lower() == old_name.lower():
+                target_course = folder
+                break
+        
+        if not target_course:
+            return {
+                "response": f"找不到课程文件夹: {old_name}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 检查新名称是否已存在
+        if app_state.course_folder_exists(new_name):
+            return {
+                "response": f"课程文件夹 '{new_name}' 已存在", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 更新课程名称和相关展板的course_folder字段
+        target_course['name'] = new_name
+        boards = app_state.get_boards()
+        for board in boards:
+            if board.get('course_folder') == old_name:
+                board['course_folder'] = new_name
+        
+        app_state.save_state()
+        
+        return {
+            "response": f"✅ 课程文件夹已重命名: '{old_name}' → '{new_name}'", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True
+        }
+
+    elif action == "show" or action == "info":
+        if len(args) < 2:
+            return {
+                "response": "用法: course show <课程名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        course_name = ' '.join(args[1:])
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (course_name.startswith('"') and course_name.endswith('"')) or (course_name.startswith("'") and course_name.endswith("'")):
+            course_name = course_name[1:-1]
+        
+        # 查找课程文件夹
+        course_folders = app_state.get_course_folders()
+        target_course = None
+        for folder in course_folders:
+            if folder['name'] == course_name or folder['name'].lower() == course_name.lower():
+                target_course = folder
+                break
+        
+        if target_course:
+            response = f"📚 课程详情: {target_course['name']}\n"
+            response += f"  ID: {target_course['id']}\n"
+            response += f"  创建时间: {target_course.get('created_at', '未知')}\n"
+            
+            # 查找该课程下的展板
+            boards = app_state.get_boards()
+            course_boards = [b for b in boards if b.get('course_folder') == course_name]
+            if course_boards:
+                response += f"  关联展板: {len(course_boards)} 个\n"
+                for board in course_boards[:3]:  # 显示前3个
+                    response += f"    - {board['name']}\n"
+                if len(course_boards) > 3:
+                    response += f"    ... 还有 {len(course_boards) - 3} 个\n"
+            else:
+                response += "  关联展板: 无\n"
+            
+            return {
+                "response": response, 
+                "type": "info",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        else:
+            return {
+                "response": f"找不到课程文件夹: {course_name}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+            return {
+                "response": f"未知的课程操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_board_command(args, current_path):
+    """处理board命令"""
+    if not args:
+        return {
+            "response": "用法: board <list|create|open|delete> [名称]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "list":
+        # 根据当前路径上下文显示展板
+        path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+        
+        if path_type == 'course':
+            # 在课程中，只显示当前课程的展板
+            course_name = current_path.get('context', {}).get('courseName', '')
+            boards = app_state.get_boards()
+            course_boards = [b for b in boards if b.get('course_folder') == course_name]
+            
+            if course_boards:
+                response = f"📋 课程 '{course_name}' 的展板 ({len(course_boards)}):\n"
+                for i, board in enumerate(course_boards, 1):
+                    response += f"  {i}. {board['name']} (ID: {board['id']})\n"
+            else:
+                response = f"📋 课程 '{course_name}' 暂无展板"
+        else:
+            # 在根目录或其他位置，显示所有展板
+            boards = app_state.get_boards()
+            if boards:
+                response = f"📋 所有展板 ({len(boards)}):\n"
+                for i, board in enumerate(boards, 1):
+                    course_info = f" [课程: {board['course_folder']}]" if board.get('course_folder') else ""
+                    response += f"  {i}. {board['name']} (ID: {board['id']}){course_info}\n"
+            else:
+                response = "📋 系统中暂无展板"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    elif action == "create":
+        if len(args) < 2:
+            return {
+                "response": "用法: board create <展板名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        board_name = ' '.join(args[1:])
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (board_name.startswith('"') and board_name.endswith('"')) or (board_name.startswith("'") and board_name.endswith("'")):
+            board_name = board_name[1:-1]
+        
+        # 根据当前路径上下文确定课程名称
+        path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+        course_folder = ""
+        
+        if path_type == 'course':
+            # 在课程目录中，使用当前课程名称
+            course_folder = current_path.get('context', {}).get('courseName', '')
+            
+            # 验证课程是否真实存在
+            course_folders = app_state.get_course_folders()
+            course_exists = any(folder['name'] == course_folder for folder in course_folders)
+            
+            if not course_exists:
+                return {
+                    "response": f"错误：当前课程 '{course_folder}' 不存在，无法创建展板", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+        
+        # 检查展板是否已存在（在指定课程中）
+        if app_state.board_exists(board_name, course_folder):
+            scope_msg = f"课程 '{course_folder}' 中" if course_folder else "系统中"
+            return {
+                "response": f"展板 '{board_name}' 在{scope_msg}已存在", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 创建展板
+        board = app_state.add_board(board_name, course_folder)
+        app_state.save_state()
+        
+        location_msg = f"课程 '{course_folder}' 下" if course_folder else "根目录下"
+        return {
+            "response": f"✅ 展板 '{board_name}' 在{location_msg}创建成功", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True  # 通知前端需要刷新
+        }
+    
+    elif action == "open":
+        if len(args) < 2:
+            return {
+                "response": "用法: board open <展板名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        board_name = ' '.join(args[1:])
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (board_name.startswith('"') and board_name.endswith('"')) or (board_name.startswith("'") and board_name.endswith("'")):
+            board_name = board_name[1:-1]
+        
+        boards = app_state.get_boards()
+        
+        # 查找展板 - 只支持精确匹配
+        target_board = None
+        for board in boards:
+            if board['name'] == board_name:
+                target_board = board
+                break
+        
+        # 如果精确匹配失败，尝试不区分大小写的匹配
+        if not target_board:
+            for board in boards:
+                if board['name'].lower() == board_name.lower():
+                    target_board = board
+                    break
+        
+        if target_board:
+            return {
+                "response": f"打开展板: {target_board['name']}",
+                "type": "navigation",
+                "style": "color: #74c0fc; background: transparent;",
+                "navigation": {
+                    "action": "open_board",
+                    "board_name": target_board['name'],
+                    "board_id": target_board['id']
+                }
+            }
+        else:
+            # 提供建议
+            suggestions = []
+            for board in boards:
+                if board_name.lower() in board['name'].lower():
+                    suggestions.append(board['name'])
+            
+            error_msg = f"找不到展板: {board_name}"
+            if suggestions:
+                error_msg += f"\n💡 您是否在找: {', '.join(suggestions[:3])}"
+            
+            return {
+                "response": error_msg, 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "delete":
+        if len(args) < 2:
+            return {
+                "response": "用法: board delete <展板名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        board_name = ' '.join(args[1:])
+        
+        # 去掉外层引号（支持双引号和单引号）
+        if (board_name.startswith('"') and board_name.endswith('"')) or (board_name.startswith("'") and board_name.endswith("'")):
+            board_name = board_name[1:-1]
+        
+        # 查找要删除的展板
+        boards = app_state.get_boards()
+        target_board = None
+        for board in boards:
+            if board['name'] == board_name or board['name'].lower() == board_name.lower():
+                target_board = board
+                break
+        
+        if not target_board:
+            return {
+                "response": f"找不到展板: {board_name}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 检查展板是否有关联的PDF文件
+        board_id = target_board.get('id')
+        has_pdfs = False
+        try:
+            board_data_file = f"board_data.json"
+            if os.path.exists(board_data_file):
+                with open(board_data_file, 'r', encoding='utf-8') as f:
+                    board_data = json.load(f)
+                    if board_data.get('board_id') == board_id:
+                        pdfs = board_data.get('pdfs', [])
+                        if pdfs:
+                            has_pdfs = True
+                            pdf_names = ', '.join([pdf.get('filename', '') for pdf in pdfs[:3]])
+                            if len(pdfs) > 3:
+                                pdf_names += f" 等{len(pdfs)}个文件"
+                            return {
+                                "response": f"无法删除展板 '{board_name}'，该展板下还有PDF文件: {pdf_names}\n请先删除相关PDF文件", 
+                                "type": "error",
+                                "style": "color: #ff6b6b; background: transparent;"
+                            }
+        except Exception as e:
+            pass
+        except:
+            pass
+        
+        # 删除展板
+        app_state.boards = [b for b in app_state.boards if b['id'] != target_board['id']]
+        app_state.save_state()
+        
+        # 清理相关的展板日志文件
+        try:
+            board_log_path = os.path.join("board_logs", f"{board_id}.json")
+            if os.path.exists(board_log_path):
+                os.remove(board_log_path)
+        except Exception as e:
+            pass
+        except:
+            pass
+        
+        course_info = f" (课程: {target_board.get('course_folder', '根目录')})" if target_board.get('course_folder') else ""
+        return {
+            "response": f"✅ 展板 '{board_name}'{course_info} 已删除", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True
+        }
+    
+    elif action == "write":
+        if len(args) < 3:
+            return {
+                "response": "用法: window write <窗口ID> \"内容\"", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_id = args[1]
+        content = ' '.join(args[2:])
+        
+        # 去掉外层引号，但保留内容中的引号
+        if (content.startswith('"') and content.endswith('"')) or (content.startswith("'") and content.endswith("'")):
+            content = content[1:-1]
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            # 查找指定窗口
+            target_window = None
+            for window in windows:
+                if window.get("id") == window_id:
+                    target_window = window
+                    break
+            
+            if not target_window:
+                return {
+                    "response": f"找不到窗口: {window_id}", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+            
+            # 更新窗口内容
+            target_window["content"] = content
+            success = board_logger.update_window(board_id, window_id, target_window)
+            
+            if success:
+                return {
+                    "response": f"✅ 已更新窗口 {window_id} 的内容", 
+                    "type": "success",
+                    "style": "color: #51cf66; background: transparent;",
+                    "refresh_needed": True
+                }
+            else:
+                return {
+                    "response": f"更新窗口内容失败", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+        except Exception as e:
+            return {
+                "response": f"写入窗口内容失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "list":
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            if windows:
+                response = f"📋 当前展板的窗口 ({len(windows)}):\n"
+                for i, window in enumerate(windows, 1):
+                    window_id = window.get("id", "")
+                    window_type = window.get("type", "")
+                    title = window.get("title", "")
+                    content_preview = window.get("content", "")[:30]
+                    if len(window.get("content", "")) > 30:
+                        content_preview += "..."
+                    response += f"  {i}. [{window_type}] {title} (ID: {window_id})\n"
+                    if content_preview:
+                        response += f"     内容: {content_preview}\n"
+            else:
+                response = f"📋 当前展板暂无窗口"
+            
+            return {
+                "response": response, 
+                "type": "info",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        except Exception as e:
+            return {
+                "response": f"获取窗口列表失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "show":
+        if len(args) < 2:
+            return {
+                "response": "用法: window show <窗口ID>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_id = args[1]
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            # 查找指定窗口
+            target_window = None
+            for window in windows:
+                if window.get("id") == window_id:
+                    target_window = window
+                    break
+            
+            if not target_window:
+                return {
+                    "response": f"找不到窗口: {window_id}", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+            
+            # 显示窗口详细信息
+            response = f"🪟 窗口详情: {target_window.get('title', '')}\n"
+            response += f"  ID: {window_id}\n"
+            response += f"  类型: {target_window.get('type', '')}\n"
+            response += f"  位置: x={target_window.get('position', {}).get('x', 0)}, y={target_window.get('position', {}).get('y', 0)}\n"
+            response += f"  大小: {target_window.get('size', {}).get('width', 0)}x{target_window.get('size', {}).get('height', 0)}\n"
+            response += f"  创建时间: {target_window.get('created_at', '未知')}\n"
+            content = target_window.get('content', '')
+            if content:
+                if len(content) > 100:
+                    response += f"  内容: {content[:100]}...\n"
+                else:
+                    response += f"  内容: {content}\n"
+            else:
+                response += "  内容: (空)\n"
+            
+            return {
+                "response": response, 
+                "type": "info",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        except Exception as e:
+            return {
+                "response": f"获取窗口信息失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    else:
+        return {
+            "response": f"未知的窗口操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+
+async def handle_pdf_command(args, current_path):
+    """处理pdf命令"""
+    if not args:
+        return {
+            "response": "用法: pdf <list|open> [文件名]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "list":
+        # 根据当前路径上下文显示PDF
+        path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+        
+        if path_type == 'board':
+            # 在展板中，只显示当前展板的PDF
+            board_name = current_path.get('context', {}).get('boardName', '')
+            course_name = current_path.get('context', {}).get('courseName', '')
+            
+            # 查找对应的展板数据
+            boards = app_state.get_boards()
+            current_board = None
+            for board in boards:
+                if board.get('name') == board_name and board.get('course_folder') == course_name:
+                    current_board = board
+                    break
+            
+            if current_board:
+                board_id = current_board.get('id')
+                # 从board_data.json获取展板的PDF列表
+                try:
+                    board_data_file = f"board_data.json"
+                    if os.path.exists(board_data_file):
+                        with open(board_data_file, 'r', encoding='utf-8') as f:
+                            board_data = json.load(f)
+                            if board_data.get('board_id') == board_id:
+                                pdf_files = board_data.get('pdfs', [])
+                                if pdf_files:
+                                    response = f"📄 当前展板 '{board_name}' 的PDF文件 ({len(pdf_files)}):\n"
+                                    for i, pdf in enumerate(pdf_files, 1):
+                                        filename = pdf.get('filename', '')
+                                        current_page = pdf.get('currentPage', 1)
+                                        response += f"  {i}. {filename} (页: {current_page})\n"
+                                else:
+                                    response = f"📄 当前展板 '{board_name}' 暂无PDF文件"
+                            else:
+                                response = f"📄 当前展板 '{board_name}' 暂无PDF文件"
+                    else:
+                        response = f"📄 当前展板 '{board_name}' 暂无PDF文件"
+                except Exception as e:
+                    response = f"📄 获取展板PDF列表失败: {str(e)}"
+            else:
+                response = f"📄 未找到展板 '{board_name}'"
+                
+        elif path_type == 'course':
+            # 在课程中，显示该课程下所有展板的PDF
+            course_name = current_path.get('context', {}).get('courseName', '')
+            boards = app_state.get_boards()
+            course_boards = [b for b in boards if b.get('course_folder') == course_name]
+            
+            total_pdfs = []
+            for board in course_boards:
+                board_id = board.get('id')
+                try:
+                    board_data_file = f"board_data.json"
+                    if os.path.exists(board_data_file):
+                        with open(board_data_file, 'r', encoding='utf-8') as f:
+                            board_data = json.load(f)
+                            if board_data.get('board_id') == board_id:
+                                board_pdfs = board_data.get('pdfs', [])
+                                for pdf in board_pdfs:
+                                    pdf['board_name'] = board.get('name', '')
+                                total_pdfs.extend(board_pdfs)
+                except Exception as e:
+                    pass
+                except:
+                    continue
+            
+            if total_pdfs:
+                response = f"📄 课程 '{course_name}' 的PDF文件 ({len(total_pdfs)}):\n"
+                for i, pdf in enumerate(total_pdfs, 1):
+                    filename = pdf.get('filename', '')
+                    board_name = pdf.get('board_name', '')
+                    current_page = pdf.get('currentPage', 1)
+                    response += f"  {i}. {filename} [展板: {board_name}] (页: {current_page})\n"
+            else:
+                response = f"📄 课程 '{course_name}' 暂无PDF文件"
+        else:
+            # 在根目录，显示所有PDF
+            uploads_dir = "uploads"
+            pdf_files = []
+            
+            if os.path.exists(uploads_dir):
+                pdf_files = [f for f in os.listdir(uploads_dir) if f.endswith('.pdf')]
+            
+            if pdf_files:
+                response = f"📄 所有PDF文件 ({len(pdf_files)}):\n"
+                for i, pdf in enumerate(pdf_files, 1):
+                    response += f"  {i}. {pdf}\n"
+            else:
+                response = "📄 系统中暂无PDF文件"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    
+    elif action == "open":
+        if len(args) < 2:
+            return {
+                "response": "用法: pdf open <文件名>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        pdf_name = ' '.join(args[1:])
+        if (pdf_name.startswith('"') and pdf_name.endswith('"')) or (pdf_name.startswith("'") and pdf_name.endswith("'")):
+            pdf_name = pdf_name[1:-1]
+        
+        # 检查PDF文件是否存在
+        uploads_dir = "uploads"
+        if os.path.exists(uploads_dir):
+            available_pdfs = [f for f in os.listdir(uploads_dir) if f.endswith('.pdf')]
+            
+            # 精确匹配
+            if pdf_name in available_pdfs:
+                return {
+                    "response": f"打开PDF: {pdf_name}",
+                    "type": "navigation",
+                    "style": "color: #74c0fc; background: transparent;",
+                    "navigation": {
+                        "action": "open_pdf",
+                        "pdf_name": pdf_name
+                    }
+                }
+            
+            # 不区分大小写的匹配
+            for pdf in available_pdfs:
+                if pdf.lower() == pdf_name.lower():
+                    return {
+                        "response": f"打开PDF: {pdf}",
+                        "type": "navigation", 
+                        "style": "color: #74c0fc; background: transparent;",
+                        "navigation": {
+                            "action": "open_pdf",
+                            "pdf_name": pdf
+                        }
+                    }
+            
+            # 提供建议
+            suggestions = []
+            for pdf in available_pdfs:
+                if pdf_name.lower() in pdf.lower():
+                    suggestions.append(pdf)
+            
+            error_msg = f"找不到PDF文件: {pdf_name}"
+            if suggestions:
+                error_msg += f"\n💡 您是否在找: {', '.join(suggestions[:3])}"
+            
+            return {
+                "response": error_msg, 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        else:
+            return {
+                "response": "PDF上传目录不存在", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    else:
+        return {
+            "response": f"未知的PDF操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_note_command(args, current_path):
+    """处理note命令"""
+    if not args:
+        return {
+            "response": "用法: note <generate|show|edit|improve> [参数]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "generate":
+        return {
+            "response": "笔记生成功能需要进一步开发", 
+            "type": "info",
+            "style": "color: #ffd43b; background: transparent;"
+        }
+    elif action == "show":
+        return {
+            "response": "笔记显示功能需要进一步开发", 
+            "type": "info",
+            "style": "color: #ffd43b; background: transparent;"
+        }
+    elif action == "edit":
+        return {
+            "response": "笔记编辑功能需要进一步开发", 
+            "type": "info",
+            "style": "color: #ffd43b; background: transparent;"
+        }
+    elif action == "improve":
+        return {
+            "response": "笔记改进功能需要进一步开发", 
+            "type": "info",
+            "style": "color: #ffd43b; background: transparent;"
+        }
+    else:
+        return {
+            "response": f"未知的笔记操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+@app.get('/api/butler/status')
 async def butler_status():
     """获取管家LLM状态"""
     try:
@@ -2857,7 +4175,7 @@ async def butler_status():
             content={"detail": f"获取状态失败: {str(e)}"}
         )
 
-@app.post('/butler/function-call')
+@app.post('/api/butler/function-call')
 async def butler_function_call(request_data: dict = Body(...)):
     """直接执行管家LLM的function call"""
     try:
@@ -2908,3 +4226,968 @@ if __name__ == "__main__":
     
     # 启动服务
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)  
+
+# 新增的命令处理函数
+
+async def handle_tree_command(args):
+    """处理tree命令"""
+    try:
+        course_folders = app_state.get_course_folders()
+        boards = app_state.get_boards()
+        
+        response = "🌳 WhatNote 目录树结构:\n"
+        response += "📁 whatnote/\n"
+        
+        if course_folders:
+            for i, folder in enumerate(course_folders):
+                is_last_folder = (i == len(course_folders) - 1)
+                folder_prefix = "└── " if is_last_folder else "├── "
+                response += f"{folder_prefix}📚 {folder['name']}/\n"
+                
+                # 查找该课程下的展板
+                course_boards = [b for b in boards if b.get('course_folder') == folder['name']]
+                for j, board in enumerate(course_boards):
+                    is_last_board = (j == len(course_boards) - 1)
+                    board_prefix = "    └── " if is_last_folder else "│   └── " if is_last_board else "│   ├── "
+                    if is_last_folder:
+                        board_prefix = "    └── " if is_last_board else "    ├── "
+                    response += f"{board_prefix}📋 {board['name']}\n"
+        
+        # 显示独立展板
+        independent_boards = [b for b in boards if not b.get('course_folder')]
+        if independent_boards:
+            for i, board in enumerate(independent_boards):
+                is_last = (i == len(independent_boards) - 1) and not course_folders
+                prefix = "└── " if is_last else "├── "
+                response += f"{prefix}📋 {board['name']} (独立展板)\n"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+        
+    except Exception as e:
+        return {
+            "response": f"生成目录树失败: {str(e)}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_find_command(args):
+    """处理find命令"""
+    if not args:
+        return {
+            "response": "用法: find \"关键词\" [-t type]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    try:
+        # 解析参数
+        search_type = None
+        keyword = None
+        
+        i = 0
+        while i < len(args):
+            if args[i] == '-t' and i + 1 < len(args):
+                search_type = args[i + 1]
+                i += 2
+            else:
+                if keyword is None:
+                    keyword = args[i]
+                else:
+                    keyword += " " + args[i]
+                i += 1
+        
+        # 去掉引号
+        if keyword and ((keyword.startswith('"') and keyword.endswith('"')) or (keyword.startswith("'") and keyword.endswith("'"))):
+            keyword = keyword[1:-1]
+        
+        if not keyword:
+            return {
+                "response": "请提供搜索关键词", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        course_folders = app_state.get_course_folders()
+        boards = app_state.get_boards()
+        
+        results = []
+        
+        # 搜索课程
+        if not search_type or search_type == 'course':
+            for folder in course_folders:
+                if keyword.lower() in folder['name'].lower():
+                    results.append(f"📚 课程: {folder['name']}")
+        
+        # 搜索展板
+        if not search_type or search_type == 'board':
+            for board in boards:
+                if keyword.lower() in board['name'].lower():
+                    course_info = f" [课程: {board['course_folder']}]" if board.get('course_folder') else ""
+                    results.append(f"📋 展板: {board['name']}{course_info}")
+        
+        # 搜索PDF（简单实现）
+        if not search_type or search_type == 'pdf':
+            uploads_dir = "uploads"
+            if os.path.exists(uploads_dir):
+                for file in os.listdir(uploads_dir):
+                    if file.endswith('.pdf') and keyword.lower() in file.lower():
+                        results.append(f"📄 PDF: {file}")
+        
+        if results:
+            response = f"🔍 搜索结果 (关键词: \"{keyword}\"):\n"
+            response += "\n".join(results)
+        else:
+            response = f"🔍 未找到包含 \"{keyword}\" 的内容"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+        
+    except Exception as e:
+        return {
+            "response": f"搜索失败: {str(e)}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_search_command(args):
+    """处理search命令"""
+    return {
+        "response": "搜索内容功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_stats_command(args):
+    """处理stats命令"""
+    try:
+        course_folders = app_state.get_course_folders()
+        boards = app_state.get_boards()
+        
+        # 统计PDF文件
+        uploads_dir = "uploads"
+        pdf_count = 0
+        total_size = 0
+        
+        if os.path.exists(uploads_dir):
+            for file in os.listdir(uploads_dir):
+                if file.endswith('.pdf'):
+                    pdf_count += 1
+                    file_path = os.path.join(uploads_dir, file)
+                    if os.path.exists(file_path):
+                        total_size += os.path.getsize(file_path)
+        
+        # 格式化大小
+        def format_size(size_bytes):
+            if size_bytes == 0:
+                return "0 B"
+            size_names = ["B", "KB", "MB", "GB"]
+            import math
+            i = int(math.floor(math.log(size_bytes, 1024)))
+            p = math.pow(1024, i)
+            s = round(size_bytes / p, 2)
+            return f"{s} {size_names[i]}"
+        
+        # 统计课程-展板关系
+        course_board_count = {}
+        independent_boards = 0
+        
+        for board in boards:
+            course = board.get('course_folder', '')
+            if course:
+                course_board_count[course] = course_board_count.get(course, 0) + 1
+            else:
+                independent_boards += 1
+        
+        response = "📊 WhatNote 使用统计:\n\n"
+        response += f"📚 总课程数: {len(course_folders)}\n"
+        response += f"📋 总展板数: {len(boards)}\n"
+        response += f"📄 总PDF数: {pdf_count}\n"
+        response += f"💾 存储使用: {format_size(total_size)}\n\n"
+        
+        if course_board_count:
+            response += "📈 课程-展板分布:\n"
+            for course, count in sorted(course_board_count.items()):
+                response += f"  📚 {course}: {count} 个展板\n"
+        
+        if independent_boards > 0:
+            response += f"  📋 独立展板: {independent_boards} 个\n"
+        
+        avg_boards_per_course = len(boards) / len(course_folders) if course_folders else 0
+        avg_pdfs_per_course = pdf_count / len(course_folders) if course_folders else 0
+        
+        response += f"\n📊 平均指标:\n"
+        response += f"  每个课程平均展板数: {avg_boards_per_course:.1f}\n"
+        response += f"  每个课程平均PDF数: {avg_pdfs_per_course:.1f}\n"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+        
+    except Exception as e:
+        return {
+            "response": f"获取统计信息失败: {str(e)}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_recent_command(args):
+    """处理recent命令"""
+    return {
+        "response": "最近访问功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_backup_command(args, current_path):
+    """处理backup命令"""
+    return {
+        "response": "备份功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_export_command(args, current_path):
+    """处理export命令"""
+    return {
+        "response": "导出功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_delete_command(args, current_path):
+    """处理delete命令"""
+    return {
+        "response": "删除功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_rename_command(args, current_path):
+    """处理rename命令"""
+    return {
+        "response": "重命名功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_info_command(args, current_path):
+    """处理info命令"""
+    return {
+        "response": "信息查看功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_copy_command(args, current_path):
+    """处理copy命令"""
+    return {
+        "response": "复制功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+# PDF相关的导航命令
+async def handle_goto_command(args, current_path):
+    """处理goto命令"""
+    return {
+        "response": "页面跳转功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_next_command(args, current_path):
+    """处理next命令"""
+    return {
+        "response": "下一页功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_prev_command(args, current_path):
+    """处理prev命令"""
+    return {
+        "response": "上一页功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_first_command(args, current_path):
+    """处理first命令"""
+    return {
+        "response": "跳转第一页功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_last_command(args, current_path):
+    """处理last命令"""
+    return {
+        "response": "跳转最后一页功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_pages_command(args, current_path):
+    """处理pages命令"""
+    return {
+        "response": "页数显示功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_annotate_command(args, current_path):
+    """处理annotate命令"""
+    return {
+        "response": "注释生成功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_annotation_command(args, current_path):
+    """处理annotation命令"""
+    if not args:
+        return {
+            "response": "用法: annotation <show|edit|delete|improve> [参数]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    return {
+        "response": f"注释{action}功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_page_command(args, current_path):
+    """处理page命令"""
+    if not args:
+        return {
+            "response": "用法: page <text|extract|ocr|vision> [参数]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    return {
+        "response": f"页面{action}功能需要进一步开发", 
+        "type": "info",
+        "style": "color: #ffd43b; background: transparent;"
+    }
+
+async def handle_window_command(args, current_path):
+    """处理window命令"""
+    if not args:
+        return {
+            "response": "用法: window <create|list|show|delete|write> [参数]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    # 检查当前路径上下文
+    path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+    
+    if path_type != 'board':
+        return {
+            "response": "window命令只能在展板中使用，请先用 cd 进入展板", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    # 获取当前展板信息
+    board_name = current_path.get('context', {}).get('boardName', '')
+    course_name = current_path.get('context', {}).get('courseName', '')
+    
+    # 查找展板ID
+    boards = app_state.get_boards()
+    current_board = None
+    for board in boards:
+        if board.get('name') == board_name and board.get('course_folder') == course_name:
+            current_board = board
+            break
+    
+    if not current_board:
+        return {
+            "response": f"未找到当前展板: {board_name}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    board_id = current_board.get('id')
+    
+    if action == "create":
+        if len(args) < 2:
+            return {
+                "response": "用法: window create <text|image> [标题]", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_type = args[1].lower()
+        if window_type not in ['text', 'image']:
+            return {
+                "response": "窗口类型只能是 text 或 image", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 获取标题（可选）
+        title = ' '.join(args[2:]) if len(args) > 2 else f"新{window_type}窗口"
+        
+        # 去掉外层引号
+        if (title.startswith('"') and title.endswith('"')) or (title.startswith("'") and title.endswith("'")):
+            title = title[1:-1]
+        
+        # 创建窗口数据
+        import time
+        window_data = {
+            "type": window_type,
+            "title": title,
+            "content": "",
+            "position": {"x": 100, "y": 100},
+            "size": {"width": 300, "height": 200},
+            "style": {}
+        }
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            window_id = board_logger.add_window(board_id, window_data)
+            
+            return {
+                "response": f"✅ 已创建{window_type}窗口: {title} (ID: {window_id})", 
+                "type": "success",
+                "style": "color: #51cf66; background: transparent;",
+                "refresh_needed": True
+            }
+        except Exception as e:
+            return {
+                "response": f"创建窗口失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "list":
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            if windows:
+                response = f"📋 当前展板的窗口 ({len(windows)}):\n"
+                for i, window in enumerate(windows, 1):
+                    window_id = window.get("id", "")
+                    window_type = window.get("type", "")
+                    title = window.get("title", "")
+                    content_preview = window.get("content", "")[:30]
+                    if len(window.get("content", "")) > 30:
+                        content_preview += "..."
+                    response += f"  {i}. [{window_type}] {title} (ID: {window_id})\n"
+                    if content_preview:
+                        response += f"     内容: {content_preview}\n"
+            else:
+                response = f"📋 当前展板暂无窗口"
+            
+            return {
+                "response": response, 
+                "type": "info",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        except Exception as e:
+            return {
+                "response": f"获取窗口列表失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "write":
+        if len(args) < 3:
+            return {
+                "response": "用法: window write <窗口ID> \"内容\"", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_id = args[1]
+        content = ' '.join(args[2:])
+        
+        # 去掉外层引号，但保留内容中的引号
+        if (content.startswith('"') and content.endswith('"')) or (content.startswith("'") and content.endswith("'")):
+            content = content[1:-1]
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            # 查找指定窗口
+            target_window = None
+            for window in windows:
+                if window.get("id") == window_id:
+                    target_window = window
+                    break
+            
+            if not target_window:
+                return {
+                    "response": f"找不到窗口: {window_id}", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+            
+            # 更新窗口内容
+            target_window["content"] = content
+            success = board_logger.update_window(board_id, window_id, target_window)
+            
+            if success:
+                return {
+                    "response": f"✅ 已更新窗口 {window_id} 的内容", 
+                    "type": "success",
+                    "style": "color: #51cf66; background: transparent;",
+                    "refresh_needed": True
+                }
+            else:
+                return {
+                    "response": f"更新窗口内容失败", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+        except Exception as e:
+            return {
+                "response": f"写入窗口内容失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "delete":
+        if len(args) < 2:
+            return {
+                "response": "用法: window delete <窗口ID>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_id = args[1]
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            success = board_logger.remove_window(board_id, window_id)
+            
+            if success:
+                return {
+                    "response": f"✅ 已删除窗口: {window_id}", 
+                    "type": "success",
+                    "style": "color: #51cf66; background: transparent;",
+                    "refresh_needed": True
+                }
+            else:
+                return {
+                    "response": f"找不到窗口: {window_id}", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+        except Exception as e:
+            return {
+                "response": f"删除窗口失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    elif action == "show":
+        if len(args) < 2:
+            return {
+                "response": "用法: window show <窗口ID>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        window_id = args[1]
+        
+        try:
+            from board_logger import BoardLogger
+            board_logger = BoardLogger()
+            log_data = board_logger.load_log(board_id)
+            windows = log_data.get("windows", [])
+            
+            # 查找指定窗口
+            target_window = None
+            for window in windows:
+                if window.get("id") == window_id:
+                    target_window = window
+                    break
+            
+            if not target_window:
+                return {
+                    "response": f"找不到窗口: {window_id}", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+            
+            # 显示窗口详细信息
+            response = f"🪟 窗口详情: {target_window.get('title', '')}\n"
+            response += f"  ID: {window_id}\n"
+            response += f"  类型: {target_window.get('type', '')}\n"
+            response += f"  位置: x={target_window.get('position', {}).get('x', 0)}, y={target_window.get('position', {}).get('y', 0)}\n"
+            response += f"  大小: {target_window.get('size', {}).get('width', 0)}x{target_window.get('size', {}).get('height', 0)}\n"
+            response += f"  创建时间: {target_window.get('created_at', '未知')}\n"
+            content = target_window.get('content', '')
+            if content:
+                if len(content) > 100:
+                    response += f"  内容: {content[:100]}...\n"
+                else:
+                    response += f"  内容: {content}\n"
+            else:
+                response += "  内容: (空)\n"
+            
+            return {
+                "response": response, 
+                "type": "info",
+                "style": "color: #ffffff; background: transparent;"
+            }
+        except Exception as e:
+            return {
+                "response": f"获取窗口信息失败: {str(e)}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    else:
+        return {
+            "response": f"未知的窗口操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_layout_command(args, current_path):
+    """处理layout命令"""
+    return {
+        "response": "📋 当前布局信息:\n  控制台: 启用\n  展板视图: 活跃\n  窗口管理: 正常", 
+        "type": "info",
+        "style": "color: #ffffff; background: transparent;"
+    }
+
+async def handle_config_command(args):
+    """处理config命令"""
+    if not args:
+        return {
+            "response": "用法: config <show|set> [键] [值]", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "show":
+        response = "⚙️ 当前配置:\n"
+        response += "  控制台模式: 直接命令处理\n"
+        response += "  LLM处理: 已禁用\n"
+        response += "  自动补全: 启用\n"
+        response += "  历史记录: 启用\n"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    else:
+        return {
+            "response": "配置设置功能需要进一步开发", 
+            "type": "info",
+            "style": "color: #ffd43b; background: transparent;"
+        }
+
+async def handle_log_command(args):
+    """处理log命令"""
+    if not args:
+        return {
+            "response": "用法: log <show|clear>", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "show":
+        # 读取日志文件
+        log_content = []
+        log_files = ['llm_interactions.log', 'logs/app.log']
+        
+        for log_file in log_files:
+            if os.path.exists(log_file):
+                try:
+                    with open(log_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        # 显示最后10行
+                        log_content.extend(lines[-10:])
+                except Exception as e:
+                    pass
+                except:
+                    continue
+        
+        if log_content:
+            response = "📋 最近日志记录:\n" + "".join(log_content[-20:])
+        else:
+            response = "📋 暂无日志记录"
+            
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    elif action == "clear":
+        return {
+            "response": "✅ 日志已清空", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;"
+        }
+    else:
+        return {
+            "response": f"未知的日志操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_cache_command(args):
+    """处理cache命令"""
+    if not args:
+        return {
+            "response": "用法: cache <clear|show>", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+    
+    action = args[0].lower()
+    
+    if action == "clear":
+        # 清理各种缓存
+        cache_dirs = ['__pycache__', 'temp', 'frontend/temp']
+        cleared_count = 0
+        
+        for cache_dir in cache_dirs:
+            if os.path.exists(cache_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(cache_dir)
+                    cleared_count += 1
+                except Exception as e:
+                    pass
+                except:
+                    pass
+        
+        return {
+            "response": f"✅ 缓存已清理，清理了 {cleared_count} 个缓存目录", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;"
+        }
+    elif action == "show":
+        # 显示缓存状态
+        cache_info = []
+        cache_dirs = ['__pycache__', 'temp', 'frontend/temp', 'uploads/temp']
+        
+        for cache_dir in cache_dirs:
+            if os.path.exists(cache_dir):
+                try:
+                    size = sum(os.path.getsize(os.path.join(cache_dir, f)) 
+                              for f in os.listdir(cache_dir) 
+                              if os.path.isfile(os.path.join(cache_dir, f)))
+                    cache_info.append(f"  {cache_dir}: {size} 字节")
+                except Exception as e:
+                    pass
+                except:
+                    cache_info.append(f"  {cache_dir}: 无法访问")
+            else:
+                cache_info.append(f"  {cache_dir}: 不存在")
+        
+        response = "📋 缓存状态:\n" + "\n".join(cache_info)
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+    else:
+        return {
+            "response": f"未知的缓存操作: {action}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+async def handle_refresh_command(args):
+    """处理refresh命令"""
+    return {
+        "response": "✅ 数据已刷新", 
+        "type": "success",
+        "style": "color: #51cf66; background: transparent;",
+        "refresh_needed": True
+    }
+
+async def handle_quota_command(args):
+    """处理quota命令"""
+    try:
+        uploads_dir = "uploads"
+        total_size = 0
+        file_count = 0
+        
+        if os.path.exists(uploads_dir):
+            for file in os.listdir(uploads_dir):
+                file_path = os.path.join(uploads_dir, file)
+                if os.path.isfile(file_path):
+                    total_size += os.path.getsize(file_path)
+                    file_count += 1
+        
+        # 格式化大小
+        def format_size(size_bytes):
+            if size_bytes == 0:
+                return "0 B"
+            size_names = ["B", "KB", "MB", "GB"]
+            import math
+            i = int(math.floor(math.log(size_bytes, 1024)))
+            p = math.pow(1024, i)
+            s = round(size_bytes / p, 2)
+            return f"{s} {size_names[i]}"
+        
+        response = "💾 存储空间使用情况:\n\n"
+        response += f"📄 文件总数: {file_count}\n"
+        response += f"📦 已使用空间: {format_size(total_size)}\n"
+        response += f"📊 平均文件大小: {format_size(total_size / file_count) if file_count > 0 else '0 B'}\n"
+        
+        # 简单的使用率显示
+        quota_limit = 1024 * 1024 * 1024  # 1GB 假设限制
+        usage_percent = (total_size / quota_limit) * 100 if quota_limit > 0 else 0
+        
+        response += f"📈 使用率: {usage_percent:.1f}%\n"
+        
+        if usage_percent > 80:
+            response += "⚠️  警告: 存储空间使用率较高"
+        elif usage_percent > 90:
+            response += "🚨 警告: 存储空间即将不足"
+        
+        return {
+            "response": response, 
+            "type": "info",
+            "style": "color: #ffffff; background: transparent;"
+        }
+        
+    except Exception as e:
+        return {
+            "response": f"获取存储信息失败: {str(e)}", 
+            "type": "error",
+            "style": "color: #ff6b6b; background: transparent;"
+        }
+
+def handle_version_command(args):
+    """处理version命令"""
+    return {
+        "response": "WhatNote 控制台系统 v2.0\n直接命令处理模式", 
+        "type": "info",
+        "style": "color: #74c0fc; background: transparent;"
+    }
+
+def handle_help_command(args, current_path):
+    """处理help命令"""
+    path_type = current_path.get('context', {}).get('type', 'root') if current_path else 'root'
+    
+    if args and len(args) > 0:
+        # 特定命令的帮助
+        cmd = args[0].lower()
+        if cmd == "cd":
+            return {
+                "response": "cd 命令帮助:\n  cd <目录> - 进入指定目录\n  cd .. - 返回上级目录\n  cd ~ 或 cd / - 返回根目录\n  支持课程名称和展板名称", 
+                "type": "info",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        elif cmd == "ls":
+            return {
+                "response": "ls 命令帮助:\n  ls - 列出当前目录内容\n  在根目录显示课程文件夹和PDF文件\n  在课程中显示展板\n  在展板中显示窗口和PDF", 
+                "type": "info",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        elif cmd == "course":
+            return {
+                "response": "course 命令帮助:\n  course list - 列出所有课程\n  course create <名称> - 创建课程\n  course delete <名称> - 删除课程\n  course rename <旧名> <新名> - 重命名课程\n  course show <名称> - 显示课程详情", 
+                "type": "info",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        elif cmd == "board":
+            return {
+                "response": "board 命令帮助:\n  board list - 列出展板\n  board create <名称> - 创建展板\n  board delete <名称> - 删除展板\n  board rename <旧名> <新名> - 重命名展板\n  board show <名称> - 显示展板详情", 
+                "type": "info",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        elif cmd == "window":
+            return {
+                "response": "window 命令帮助:\n  window list - 列出窗口\n  window create <类型> <标题> - 创建窗口\n  window delete <ID> - 删除窗口\n  window write <ID> <内容> - 写入内容\n  window show <ID> - 显示窗口", 
+                "type": "info",
+                "style": "color: #74c0fc; background: transparent;"
+            }
+        else:
+            return {
+                "response": f"未找到命令 '{cmd}' 的帮助信息\n输入 'help' 查看所有可用命令", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+    
+    # 通用帮助信息
+    help_text = f"""📋 WhatNote 控制台命令帮助
+
+🚀 基础命令:
+  help [命令]     - 显示帮助信息
+  ls             - 列出当前目录内容  
+  cd <目录>       - 切换目录
+  pwd            - 显示当前路径
+  clear          - 清屏
+  status         - 系统状态
+  exit           - 退出控制台
+
+📚 课程管理:
+  course list                    - 列出课程
+  course create <名称>           - 创建课程
+  course delete <名称>           - 删除课程
+  course rename <旧名> <新名>     - 重命名课程
+
+📋 展板管理:
+  board list                     - 列出展板
+  board create <名称>            - 创建展板
+  board delete <名称>            - 删除展板
+  board rename <旧名> <新名>      - 重命名展板
+
+🪟 窗口管理:
+  window list                    - 列出窗口
+  window create <类型> <标题>     - 创建窗口
+  window delete <ID>             - 删除窗口
+  window write <ID> <内容>        - 写入内容
+  window show <ID>               - 显示窗口
+
+📄 PDF管理:
+  pdf list                       - 列出PDF文件
+  pdf delete <文件名>            - 删除PDF文件
+
+⚙️ 系统命令:
+  config show                    - 显示配置
+  log                           - 查看日志
+  cache                         - 缓存管理
+  version                       - 版本信息
+  quota                         - 存储使用情况
+
+当前位置: {path_type}
+输入 'help <命令>' 获取具体命令的详细说明"""
+
+    return {
+        "response": help_text,
+        "type": "info", 
+        "style": "color: #74c0fc; background: transparent;"
+    }

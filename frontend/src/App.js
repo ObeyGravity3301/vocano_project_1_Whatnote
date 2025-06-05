@@ -18,8 +18,9 @@ import LLMDebugPanel from "./components/LLMDebugPanel";
 import MarkdownMathRenderer from "./components/MarkdownMathRenderer";
 import TaskStatusIndicator from "./components/TaskStatusIndicator";
 import KeyboardShortcuts from "./components/KeyboardShortcuts";
-import Console from "./components/Console"; // ̨
+import Console from "./components/Console"; // 控制台
 import TaskList from "./components/TaskList"; // 导入任务列表组件
+import TextBoxWindow from "./components/TextBoxWindow"; // 导入文本框窗口组件
 import api from './api'; // 导入API客户端
 
 const { Header, Sider, Content } = Layout;
@@ -177,6 +178,10 @@ function App() {
   // 控制台相关状态
   const [consoleVisible, setConsoleVisible] = useState(false);
   
+  // 自定义窗口相关状态
+  const [customWindows, setCustomWindows] = useState({}); // 存储每个展板的自定义窗口
+  const [customWindowsVisible, setCustomWindowsVisible] = useState({}); // 控制自定义窗口的可见性
+  
   // 控制台处理函数
   const handleToggleConsole = () => {
     setConsoleVisible(!consoleVisible);
@@ -184,7 +189,7 @@ function App() {
   
   const handleConsoleCommand = async (command) => {
     try {
-      const response = await api.post('/butler/console', {
+      const response = await api.post('/api/butler/console', {
         command: command,
         multi_step_context: null
       });
@@ -194,6 +199,154 @@ function App() {
       console.error('控制台命令执行失败:', error);
       throw error;
     }
+  };
+  
+  // 控制台导航回调函数
+  const handleConsoleNavigation = (navigationInfo) => {
+    // 处理刷新请求
+    if (navigationInfo.action === 'refresh_needed') {
+      console.log('🔄 控制台请求刷新界面');
+      // 刷新课程数据
+      refreshCourses();
+      
+      // 🔧 修复：触发CourseExplorer的全局刷新事件
+      const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+      window.dispatchEvent(refreshEvent);
+      
+      message.success('界面已刷新');
+      return;
+    }
+    
+    // 🔧 新增：处理控制台命令执行完成后的自动刷新
+    if (navigationInfo.action === 'command_completed') {
+      console.log('🔄 控制台命令执行完成，自动刷新界面');
+      
+      // 延迟1秒后刷新，确保后端数据已经更新
+      setTimeout(() => {
+        // 触发CourseExplorer的全局刷新事件
+        const refreshEvent = new CustomEvent('whatnote-refresh-courses');
+        window.dispatchEvent(refreshEvent);
+        
+        // 同时刷新本地的课程数据
+        refreshCourses();
+        
+        console.log('✅ 界面已自动刷新');
+      }, 1000);
+      
+      return;
+    }
+    
+    // 处理进入课程导航
+    if (navigationInfo.action === 'enter_course') {
+      const courseName = navigationInfo.course_name;
+      console.log(`🧭 控制台导航到课程: ${courseName}`);
+      // 在courseData中查找匹配的课程
+      const course = courseData.find(c => c.name === courseName);
+      if (course && course.children && course.children.length > 0) {
+        // 自动选择第一个展板/文件
+        const firstBoard = course.children[0];
+        handleSelectFile(firstBoard);
+        console.log(`✅ 已切换到课程 "${courseName}" 的第一个展板: ${firstBoard.title}`);
+        return true;
+      }
+      console.warn(`❌ 找不到课程: ${courseName}`);
+      return false;
+    }
+    
+    // 处理进入展板导航
+    if (navigationInfo.action === 'enter_board') {
+      const boardName = navigationInfo.board_name;
+      const boardId = navigationInfo.board_id;
+      console.log(`🧭 [DEBUG] 控制台导航到展板: ${boardName}, ID: ${boardId}`);
+      
+      // 在courseData中查找匹配的展板
+      for (const course of courseData) {
+        if (course.children) {
+          const board = course.children.find(b => 
+            b.title === boardName || 
+            b.key === boardId ||
+            b.title.includes(boardName)
+          );
+          if (board) {
+            console.log(`🎯 [DEBUG] 找到匹配的展板，自动选择: ${board.title} (${board.key})`);
+            console.log(`🔄 [DEBUG] 调用 handleSelectFile:`, board);
+            handleSelectFile(board);
+            
+            // 🔧 新增：立即加载自定义窗口
+            setTimeout(() => {
+              console.log(`⏰ [DEBUG] 延时100ms后调用 loadCustomWindows: ${board.key}`);
+              loadCustomWindows(board.key);
+              console.log(`📦 [DEBUG] 已加载展板 ${board.key} 的自定义窗口`);
+            }, 100);
+            
+            console.log(`✅ [DEBUG] 已切换到展板: ${boardName}`);
+            return true;
+          }
+        }
+      }
+      
+      // 🔧 增强：如果在现有courseData中找不到，尝试直接用boardId设置currentFile
+      if (boardId) {
+        console.log(`🔄 [DEBUG] 未在courseData中找到展板，尝试直接使用boardId: ${boardId}`);
+        
+        // 创建虚拟的文件节点
+        const virtualBoard = {
+          key: boardId,
+          title: boardName,
+          isLeaf: true
+        };
+        
+        console.log(`🎯 [DEBUG] 创建虚拟展板节点并自动选择: ${boardName} (${boardId})`);
+        console.log(`🔄 [DEBUG] 虚拟展板节点:`, virtualBoard);
+        setCurrentFile(virtualBoard);
+        
+        // 立即加载自定义窗口
+        setTimeout(() => {
+          console.log(`⏰ [DEBUG] 延时100ms后为虚拟展板调用 loadCustomWindows: ${boardId}`);
+          loadCustomWindows(boardId);
+          console.log(`📦 [DEBUG] 已加载虚拟展板 ${boardId} 的自定义窗口`);
+        }, 100);
+        
+        message.success(`已切换到展板: ${boardName}`);
+        return true;
+      }
+      
+      console.warn(`❌ [DEBUG] 找不到展板: ${boardName}`);
+      return false;
+    }
+    
+    // 处理PDF导航  
+    if (navigationInfo.action === 'enter_pdf') {
+      const pdfName = navigationInfo.pdf_name;
+      const boardId = navigationInfo.board_id;
+      console.log(`🧭 控制台导航到PDF: ${pdfName}, 展板: ${boardId}`);
+      // 在当前展板的PDF中查找
+      if (boardId && courseFiles[boardId]) {
+        const pdf = courseFiles[boardId].find(p => 
+          p.filename === pdfName || 
+          p.clientFilename === pdfName ||
+          p.filename.includes(pdfName) ||
+          (p.clientFilename && p.clientFilename.includes(pdfName))
+        );
+        if (pdf) {
+          handleSelectPdf(pdf.id);
+          console.log(`✅ 已打开PDF: ${pdfName}`);
+          return true;
+        }
+      }
+      console.warn(`❌ 找不到PDF: ${pdfName}`);
+      return false;
+    }
+    
+    // 处理返回上级目录
+    if (navigationInfo.action === 'go_back') {
+      console.log(`🧭 控制台请求返回上级目录`);
+      // 这里可以实现返回逻辑，比如回到课程列表
+      return true;
+    }
+    
+    console.warn('未知的导航操作:', navigationInfo);
+    return false;
   };
   
   // 侧边栏宽度相关状态
@@ -604,8 +757,6 @@ function App() {
 
   // 生成整本笔记
   const handleGenerateNote = async (pdfId) => {
-    console.log('🚀 [DEBUG] handleGenerateNote 开始执行:', { pdfId, currentFileKey: currentFile?.key });
-    
     // 获取指定的PDF文件，而不是依赖当前活动的PDF
     const targetPdf = pdfId && currentFile ? 
       courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId) : 
@@ -664,14 +815,7 @@ function App() {
       console.log(`📊 分段笔记生成使用展板ID: ${boardId}`);
       
       // 调用分段生成API - 首次生成前40页
-      console.log('🌐 [DEBUG] 即将调用分段生成API:', {
-        method: 'api.generateSegmentedNote',
-        params: { serverFilename, startPage: 1, pageCount: 40, existingNote: '', boardId }
-      });
-      
       const result = await api.generateSegmentedNote(serverFilename, 1, 40, '', boardId);
-      
-      console.log('🔍 [DEBUG] 分段生成API原始响应:', result);
       
       // 提取分段生成结果
       const segmentedResult = result?.result || {};
@@ -768,13 +912,10 @@ function App() {
       updatePdfProperty(targetPdfId, 'noteLoading', false);
     }
     
-    console.log('🏁 [DEBUG] handleGenerateNote 执行完成');
-  };
+    };
 
   // 继续生成笔记功能
   const handleContinueNote = async (pdfId) => {
-    console.log('🚀 [DEBUG] handleContinueNote 开始执行:', { pdfId });
-    
     const targetPdf = pdfId && currentFile ? 
       courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId) : 
       getActivePdf();
@@ -817,8 +958,6 @@ function App() {
       
       // 调用继续生成API
       const result = await api.continueSegmentedNote(serverFilename, currentNote, nextStartPage, pageCount, boardId);
-      
-      console.log('🔍 [DEBUG] 继续生成API响应:', result);
       
       // 提取生成结果
       const segmentedResult = result?.result || {};
@@ -908,13 +1047,10 @@ function App() {
       updatePdfProperty(targetPdfId, 'noteLoading', false);
     }
     
-    console.log('🏁 [DEBUG] handleContinueNote 执行完成');
-  };
+    };
 
   // 改进笔记功能
   const handleImproveNote = async (pdfId, improvePrompt) => {
-    console.log('🚀 [DEBUG] handleImproveNote 开始执行:', { pdfId, improvePrompt });
-    
     // 获取指定的PDF文件
     const targetPdf = pdfId && currentFile ? 
       courseFiles[currentFile.key]?.find(pdf => pdf.id === pdfId) : 
@@ -1025,7 +1161,6 @@ function App() {
       updatePdfProperty(pdfId, 'noteLoading', false);
     }
     
-    console.log('🏁 [DEBUG] handleImproveNote 执行完成');
   };
 
   // 为指定页面生成注释
@@ -1145,15 +1280,6 @@ function App() {
             }
             
             filePdfs[pdfIndex] = updatedPdf;
-            
-            console.log('📝 注释已存储到状态:', {
-              pdfId: pdfId,
-              pageNum: pageNum,
-              annotationLength: annotation.length,
-              currentPage: filePdfs[pdfIndex].currentPage,
-              updateCurrentDisplay: filePdfs[pdfIndex].currentPage === pageNum,
-              storedAnnotationPreview: annotation.substring(0, 100) + '...'
-            });
             
             return {
               ...prev,
@@ -2235,8 +2361,43 @@ function App() {
 
   // 处理课程文件选择
   const handleSelectFile = (fileNode) => {
+    console.log(`🎯 [DEBUG] handleSelectFile 被调用，文件节点:`, fileNode);
+    console.log(`📋 [DEBUG] 文件节点键值: ${fileNode.key}`);
+    console.log(`📋 [DEBUG] 文件节点标题: ${fileNode.title}`);
+    
     setCurrentFile(fileNode);
+    
+    // 🔧 强化：无条件加载自定义窗口
+    if (fileNode.key) {
+      console.log(`🔄 [DEBUG] 准备调用 loadCustomWindows，boardId: ${fileNode.key}`);
+      
+      // 立即调用
+      loadCustomWindows(fileNode.key);
+      console.log(`📞 [DEBUG] loadCustomWindows 调用完成 (立即)`);
+      
+      // 🔧 新增：延时再次调用，确保数据加载
+      setTimeout(() => {
+        console.log(`⏰ [DEBUG] 延时500ms后再次调用 loadCustomWindows: ${fileNode.key}`);
+        loadCustomWindows(fileNode.key);
+        console.log(`📞 [DEBUG] loadCustomWindows 延时调用完成`);
+      }, 500);
+      
+      // 🔧 新增：强制设置customWindowsVisible
+      setTimeout(() => {
+        console.log(`👁️ [DEBUG] 强制设置 customWindowsVisible[${fileNode.key}] = true`);
+        setCustomWindowsVisible(prev => ({
+          ...prev,
+          [fileNode.key]: true
+        }));
+        console.log(`✅ [DEBUG] customWindowsVisible 设置完成`);
+      }, 600);
+      
+    } else {
+      console.warn(`⚠️ [DEBUG] 文件节点没有key，无法加载自定义窗口`);
+    }
+    
     const hasPdfs = courseFiles[fileNode.key] && courseFiles[fileNode.key].length > 0;
+    console.log(`📄 [DEBUG] 该展板是否有PDF文件: ${hasPdfs}`);
     
     if (hasPdfs) {
       // 检查是否有PDF窗口已经打开
@@ -2298,6 +2459,8 @@ function App() {
       // 这里只是更新窗口，不会自动打开
       setShowChapterNoteWindow(true);
     }
+    
+    console.log(`✅ [DEBUG] handleSelectFile 执行完成`);
   };
 
   // 选择PDF文件
@@ -2467,12 +2630,8 @@ function App() {
   const refreshCourses = async () => {
     try {
       console.log('🔄 刷新课程和文件列表');
-      const response = await fetch('/api/app-state');
-      if (!response.ok) {
-        throw new Error(`获取课程列表失败 (HTTP ${response.status})`);
-      }
-      
-      const data = await response.json();
+      // 使用API客户端而不是直接fetch
+      const data = await api.getAppState();
       setCourseData(data.course_folders || []);
       console.log('✅ 课程数据刷新成功');
     } catch (error) {
@@ -3001,7 +3160,6 @@ function App() {
     const targetPdf = courseFiles[currentFile?.key]?.find(pdf => pdf.id === pdfId);
     
     if (!targetPdf) {
-      console.log('❌ [DEBUG] 未找到目标PDF');
       return;
     }
     
@@ -3097,7 +3255,6 @@ function App() {
             </button>
             <button 
               onClick={() => {
-                console.log('🔄 [DEBUG] 强制重新渲染所有组件');
                 // 通过更新一个无关的状态来强制重新渲染
                 setActivePdfId(prev => prev === activePdf.id ? null : activePdf.id);
                 setTimeout(() => setActivePdfId(activePdf.id), 50);
@@ -3403,12 +3560,6 @@ function App() {
 
   // 渲染展板笔记内容 - 完全模仿PDF窗口的userNote结构
   const renderBoardNoteContent = (boardId) => {
-    console.log('🎨 [DEBUG] renderBoardNoteContent 被调用:', {
-      boardId,
-      noteLength: boardNotes[boardId]?.length || 0,
-      loading: boardNoteLoading[boardId] || false
-    });
-
     return (
       <UserNoteEditor
         aiContent={''} // 展板笔记没有AI内容，留空
@@ -3838,6 +3989,150 @@ function App() {
     };
   }, [currentFile, courseFiles]); // 依赖currentFile和courseFiles以确保命令处理中的状态是最新的
 
+  // 获取展板的自定义窗口
+  const loadCustomWindows = async (boardId) => {
+    console.log(`🔍 [DEBUG] loadCustomWindows 被调用，boardId: ${boardId}`);
+    
+    try {
+      console.log(`📡 [DEBUG] 开始请求展板数据: /api/boards/${boardId}`);
+      const response = await api.get(`/api/boards/${boardId}`);
+      
+      console.log(`📋 [DEBUG] API响应状态: ${response.status}`);
+      
+      if (response.status === 200) {
+        const boardData = response.data;
+        const windows = boardData.windows || [];
+        
+        console.log(`🪟 [DEBUG] 获取到的窗口数据:`, windows);
+        console.log(`📊 [DEBUG] 窗口数量: ${windows.length}`);
+        
+        // 更新自定义窗口状态
+        setCustomWindows(prev => {
+          const newState = {
+            ...prev,
+            [boardId]: windows
+          };
+          console.log(`🔄 [DEBUG] 更新customWindows状态:`, newState);
+          return newState;
+        });
+        
+        // 设置所有窗口为可见
+        const visibilityMap = {};
+        windows.forEach(window => {
+          visibilityMap[window.id] = true;
+          console.log(`👁️ [DEBUG] 设置窗口可见: ${window.id} - ${window.title}`);
+        });
+        
+        setCustomWindowsVisible(prev => {
+          const newState = {
+            ...prev,
+            [boardId]: visibilityMap
+          };
+          console.log(`🔄 [DEBUG] 更新customWindowsVisible状态:`, newState);
+          return newState;
+        });
+        
+        console.log(`✅ [DEBUG] 已加载展板 ${boardId} 的 ${windows.length} 个自定义窗口`);
+      } else {
+        console.error(`❌ [DEBUG] API响应错误，状态码: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ [DEBUG] 加载自定义窗口失败:', error);
+      console.error('❌ [DEBUG] 错误详情:', error.message, error.stack);
+    }
+  };
+
+  // 更新自定义窗口内容
+  const updateCustomWindowContent = (boardId, windowId, newContent) => {
+    setCustomWindows(prev => ({
+      ...prev,
+      [boardId]: prev[boardId]?.map(window => 
+        window.id === windowId 
+          ? { ...window, content: newContent }
+          : window
+      ) || []
+    }));
+  };
+
+  // 删除自定义窗口
+  const deleteCustomWindow = async (boardId, windowId) => {
+    try {
+      const response = await api.delete(`/api/boards/${boardId}/windows/${windowId}`);
+      if (response.status === 200) {
+        // 从状态中移除窗口
+        setCustomWindows(prev => ({
+          ...prev,
+          [boardId]: prev[boardId]?.filter(window => window.id !== windowId) || []
+        }));
+        
+        setCustomWindowsVisible(prev => ({
+          ...prev,
+          [boardId]: {
+            ...prev[boardId],
+            [windowId]: false
+          }
+        }));
+        
+        message.success('窗口已删除');
+      }
+    } catch (error) {
+      console.error('删除窗口失败:', error);
+      message.error('删除窗口失败');
+    }
+  };
+
+  // 渲染自定义窗口
+  const renderCustomWindows = (boardId) => {
+    const windows = customWindows[boardId] || [];
+    const visibility = customWindowsVisible[boardId] || {};
+    
+    return windows.map(window => {
+      if (!visibility[window.id]) return null;
+      
+      const windowId = `custom-${boardId}-${window.id}`;
+      
+      return (
+        <DraggableWindow
+          key={windowId}
+          title={window.title}
+          defaultPosition={window.position || { x: 100, y: 100 }}
+          defaultSize={window.size || { width: 300, height: 200 }}
+          onClose={() => {
+            setCustomWindowsVisible(prev => ({
+              ...prev,
+              [boardId]: {
+                ...prev[boardId],
+                [window.id]: false
+              }
+            }));
+          }}
+          onDragStop={(e, data) => {
+            // 可以在这里保存位置到后端
+            console.log(`窗口 ${window.id} 移动到:`, data);
+          }}
+          onResize={(e, dir, ref, delta, pos) => {
+            // 可以在这里保存大小到后端
+            const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
+            console.log(`窗口 ${window.id} 调整大小到:`, newSize);
+          }}
+          zIndex={600 + parseInt(window.id.replace(/\D/g, '')) % 100} // 动态z-index
+          windowId={windowId}
+          windowType="textbox"
+          onBringToFront={() => handleBringNonPdfWindowToFront(windowId, 'textbox')}
+          titleBarColor="#52c41a" // 绿色标题栏表示自定义窗口
+          resizable
+        >
+          <TextBoxWindow
+            window={window}
+            boardId={boardId}
+            onContentChange={(newContent) => updateCustomWindowContent(boardId, window.id, newContent)}
+            onClose={() => deleteCustomWindow(boardId, window.id)}
+          />
+        </DraggableWindow>
+      );
+    });
+  };
+
   return (
     <Layout style={{ height: "100vh" }}>
       {/* 调试面板 */}
@@ -4227,6 +4522,9 @@ function App() {
               {renderBoardNoteContent(currentFile.key)}
             </DraggableWindow>
           )}
+
+          {/* 自定义窗口（通过控制台创建的文本框等） */}
+          {currentFile && renderCustomWindows(currentFile.key)}
         </Content>
       </Layout>
       
@@ -4248,6 +4546,7 @@ function App() {
           onClose={() => setConsoleVisible(false)}
           apiClient={api}
           onCommand={handleConsoleCommand}
+          onNavigation={handleConsoleNavigation}
         />
       )}
       

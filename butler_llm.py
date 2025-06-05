@@ -216,7 +216,7 @@ class ButlerLLM:
     
     def process_user_request(self, request, status_log=None):
         """
-        处理用户请求
+        处理用户请求 - 支持CLI指令和自然语言
         
         Args:
             request: 用户请求内容
@@ -228,6 +228,164 @@ class ButlerLLM:
         # 初始化function calls记录
         self.last_function_calls = []
         
+        # 检查是否是CLI指令
+        cli_command = self._parse_cli_command(request.strip())
+        if cli_command:
+            return self._process_cli_command(cli_command, status_log)
+        
+        # 处理自然语言请求
+        return self._process_natural_language(request, status_log)
+    
+    def _parse_cli_command(self, input_text):
+        """
+        解析CLI指令
+        
+        Args:
+            input_text: 输入文本
+            
+        Returns:
+            解析后的CLI命令对象或None
+        """
+        import shlex
+        import re
+        
+        # 清理输入文本
+        text = input_text.strip()
+        if not text:
+            return None
+        
+        # 定义明确的CLI命令关键词
+        cli_commands = {
+            'pwd', 'cd', 'ls', 'course', 'board', 'pdf', 'note', 'board-note', 
+            'expert', 'status', 'config', 'help', 'find', 'history', 'undo', 
+            'redo', 'batch', 'alias', 'man'
+        }
+        
+        # 自然语言特征检测
+        natural_language_indicators = [
+            # 中文自然语言特征
+            '请', '能', '帮', '我想', '可以', '如何', '怎么', '什么', '为什么',
+            '是否', '有没有', '能否', '可不可以', '应该', '需要', '想要',
+            '？', '?', '吗', '呢', '吧', '啊', '哦', '嗯',
+            
+            # 英文自然语言特征
+            'please', 'can you', 'could you', 'would you', 'how to', 'what is',
+            'why', 'when', 'where', 'how', 'explain', 'tell me', 'show me',
+            'I want', 'I need', 'I would like'
+        ]
+        
+        # 检查是否包含自然语言特征
+        text_lower = text.lower()
+        for indicator in natural_language_indicators:
+            if indicator in text_lower:
+                return None
+        
+        # 检查文本长度（CLI命令通常较短）
+        if len(text) > 100:  # CLI命令通常不会太长
+            return None
+            
+        # 检查单词数量（CLI命令单词数有限）
+        words = text.split()
+        if len(words) > 15:  # CLI命令参数通常不会太多
+            return None
+            
+        # 检查是否以CLI命令开头
+        if words and words[0] not in cli_commands:
+            # 进一步检查是否像文件路径或其他CLI模式
+            first_word = words[0]
+            
+            # 检查是否是路径表达式
+            if first_word.startswith('/') or first_word.startswith('./') or first_word.startswith('../'):
+                return None  # 暂时不支持直接路径命令
+                
+            # 检查是否包含中文字符但不是引号内的参数
+            if re.search(r'[\u4e00-\u9fff]', first_word):
+                return None
+                
+            # 如果第一个词不是已知命令，判定为自然语言
+            return None
+        
+        try:
+            # 使用shlex解析命令行参数，处理引号
+            tokens = shlex.split(text)
+            if not tokens:
+                return None
+                
+            return {
+                'command': tokens[0],
+                'args': tokens[1:],
+                'raw': input_text
+            }
+        except ValueError as e:
+            # shlex解析失败，可能是引号不匹配等
+            logger.debug(f"CLI解析失败: {str(e)}")
+            return None
+        except Exception as e:
+            logger.debug(f"CLI解析异常: {str(e)}")
+            return None
+    
+    def _process_cli_command(self, cli_command, status_log=None):
+        """
+        处理CLI指令
+        
+        Args:
+            cli_command: 解析后的CLI命令
+            status_log: 状态日志
+            
+        Returns:
+            处理结果
+        """
+        command = cli_command['command']
+        args = cli_command['args']
+        
+        logger.info(f"处理CLI指令: {command} {' '.join(args)}")
+        
+        try:
+            if command == 'pwd':
+                return self._handle_pwd()
+            elif command == 'cd':
+                return self._handle_cd(args)
+            elif command == 'ls':
+                return self._handle_ls(args)
+            elif command == 'course':
+                return self._handle_course(args)
+            elif command == 'board':
+                return self._handle_board(args)
+            elif command == 'pdf':
+                return self._handle_pdf(args)
+            elif command == 'note':
+                return self._handle_note(args)
+            elif command == 'board-note':
+                return self._handle_board_note(args)
+            elif command == 'expert':
+                return self._handle_expert(args)
+            elif command == 'status':
+                return self._handle_status(args)
+            elif command == 'config':
+                return self._handle_config(args)
+            elif command == 'help':
+                return self._handle_help(args)
+            elif command == 'find':
+                return self._handle_find(args)
+            elif command == 'history':
+                return self._handle_history(args)
+            else:
+                return {
+                    "response": f"未知命令: {command}。输入 'help' 查看可用命令。",
+                    "command": None
+                }
+                
+        except Exception as e:
+            logger.error(f"CLI命令处理失败: {str(e)}")
+            return {
+                "response": f"命令执行失败: {str(e)}",
+                "command": None
+            }
+    
+    def _process_natural_language(self, request, status_log=None):
+        """
+        处理自然语言请求（原有逻辑）
+        """
         # 构建提示词
         prompt = f"【用户请求】{request}\n\n"
         
@@ -290,40 +448,1032 @@ class ButlerLLM:
             "command": command
         }
     
-    def _extract_command_json(self, response):
-        """从回复中提取JSON格式的操作命令"""
-        import re
-        import json
+    # CLI命令处理方法
+    def _handle_pwd(self):
+        """处理pwd命令 - 显示当前工作目录"""
+        # 从上下文获取当前位置
+        current_path = getattr(self, 'current_path', '/')
         
-        # 尝试寻找JSON格式的命令
-        json_pattern = r'({[\s\S]*?})'
-        json_matches = re.findall(json_pattern, response)
+        return {
+            "response": current_path,
+            "command": {
+                "type": "system_query",
+                "action": "get_current_path",
+                "params": {}
+            }
+        }
+    
+    def _handle_cd(self, args):
+        """处理cd命令 - 切换目录"""
+        if not args:
+            target_path = '/'
+        else:
+            target_path = args[0]
         
-        for match in json_matches:
-            try:
-                cmd = json.loads(match)
-                # 检查是否包含必要的命令字段
-                if isinstance(cmd, dict) and "type" in cmd and "action" in cmd:
-                    return cmd
-            except:
-                pass
+        return {
+            "response": f"切换到目录: {target_path}",
+            "command": {
+                "type": "navigation",
+                "action": "change_directory", 
+                "params": {"path": target_path}
+            }
+        }
+    
+    def _handle_ls(self, args):
+        """处理ls命令 - 列出内容"""
+        options = self._parse_options(args)
+        target_dir = options.get('target', '.')
+        
+        return {
+            "response": f"列出目录内容: {target_dir}",
+            "command": {
+                "type": "file_operation",
+                "action": "list_directory",
+                "params": {
+                    "directory": target_dir,
+                    "detailed": "-l" in args,
+                    "all": "-a" in args,
+                    "filter": options
+                }
+            }
+        }
+    
+    def _handle_course(self, args):
+        """处理course命令 - 课程管理"""
+        if not args:
+            return {"response": "course命令需要子命令。输入 'help course' 查看用法。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand in ['create', 'new']:
+            if not sub_args:
+                return {"response": "请指定课程文件夹名称", "command": None}
+            
+            course_name = sub_args[0]
+            options = self._parse_options(sub_args[1:])
+            
+            return {
+                "response": f"创建课程文件夹: {course_name}",
+                "command": {
+                    "type": "course_operation",
+                    "action": "create_folder",
+                    "params": {
+                        "folder_name": course_name,
+                        "description": options.get("desc", "")
+                    }
+                }
+            }
+            
+        elif subcommand in ['list', 'ls']:
+            options = self._parse_options(sub_args)
+            return {
+                "response": "列出所有课程文件夹",
+                "command": {
+                    "type": "course_operation", 
+                    "action": "list_folders",
+                    "params": {
+                        "sort": options.get("sort", "name"),
+                        "detailed": "--verbose" in sub_args or "-v" in sub_args
+                    }
+                }
+            }
+            
+        elif subcommand in ['delete', 'rm']:
+            if not sub_args:
+                return {"response": "请指定要删除的课程文件夹名称", "command": None}
                 
-        # 如果没有找到有效的JSON命令，返回None
+            course_name = sub_args[0]
+            force = "--force" in sub_args or "-f" in sub_args
+            
+            return {
+                "response": f"删除课程文件夹: {course_name}",
+                "command": {
+                    "type": "course_operation",
+                    "action": "delete_folder", 
+                    "params": {
+                        "folder_name": course_name,
+                        "force": force
+                    }
+                }
+            }
+            
+        elif subcommand in ['rename', 'mv']:
+            if len(sub_args) < 2:
+                return {"response": "重命名需要提供旧名称和新名称", "command": None}
+                
+            old_name, new_name = sub_args[0], sub_args[1]
+            return {
+                "response": f"重命名课程文件夹: {old_name} → {new_name}",
+                "command": {
+                    "type": "course_operation",
+                    "action": "rename_folder",
+                    "params": {
+                        "old_name": old_name,
+                        "new_name": new_name
+                    }
+                }
+            }
+            
+        elif subcommand in ['show', 'info']:
+            if not sub_args:
+                return {"response": "请指定课程文件夹名称", "command": None}
+                
+            course_name = sub_args[0]
+            return {
+                "response": f"显示课程详情: {course_name}",
+                "command": {
+                    "type": "course_operation",
+                    "action": "show_folder_info",
+                    "params": {"folder_name": course_name}
+                }
+            }
+        else:
+            return {"response": f"未知的course子命令: {subcommand}", "command": None}
+    
+    def _handle_board(self, args):
+        """处理board命令 - 展板管理"""
+        if not args:
+            return {"response": "board命令需要子命令。输入 'help board' 查看用法。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand in ['create', 'new']:
+            if not sub_args:
+                return {"response": "请指定展板名称", "command": None}
+            
+            board_name = sub_args[0]
+            options = self._parse_options(sub_args[1:])
+            
+            return {
+                "response": f"创建展板: {board_name}",
+                "command": {
+                    "type": "board_operation",
+                    "action": "create_board",
+                    "params": {
+                        "board_name": board_name,
+                        "course_folder": options.get("course"),
+                        "auto_open": options.get("auto_open", True)
+                    }
+                }
+            }
+            
+        elif subcommand in ['open', 'switch', 'go']:
+            if not sub_args:
+                return {"response": "请指定展板名称或ID", "command": None}
+                
+            board_identifier = sub_args[0]
+            return {
+                "response": f"打开展板: {board_identifier}",
+                "command": {
+                    "type": "board_operation",
+                    "action": "open_board",
+                    "params": {"board_identifier": board_identifier}
+                }
+            }
+            
+        elif subcommand in ['list', 'ls']:
+            options = self._parse_options(sub_args)
+            return {
+                "response": "列出展板",
+                "command": {
+                    "type": "board_operation",
+                    "action": "list_boards",
+                    "params": {
+                        "active_only": "--active" in sub_args,
+                        "course_filter": options.get("course")
+                    }
+                }
+            }
+            
+        elif subcommand in ['close']:
+            board_name = sub_args[0] if sub_args else None
+            return {
+                "response": f"关闭展板: {board_name or '当前展板'}",
+                "command": {
+                    "type": "board_operation",
+                    "action": "close_board",
+                    "params": {"board_name": board_name}
+                }
+            }
+            
+        elif subcommand in ['delete', 'rm']:
+            if not sub_args:
+                return {"response": "请指定要删除的展板名称", "command": None}
+                
+            board_name = sub_args[0]
+            force = "--force" in sub_args or "-f" in sub_args
+            
+            return {
+                "response": f"删除展板: {board_name}",
+                "command": {
+                    "type": "board_operation",
+                    "action": "delete_board",
+                    "params": {
+                        "board_name": board_name,
+                        "force": force
+                    }
+                }
+            }
+            
+        elif subcommand == 'status':
+            return {
+                "response": "显示展板状态",
+                "command": {
+                    "type": "board_operation",
+                    "action": "get_board_status",
+                    "params": {}
+                }
+            }
+        else:
+            return {"response": f"未知的board子命令: {subcommand}", "command": None}
+    
+    def _handle_pdf(self, args):
+        """处理pdf命令 - PDF管理"""
+        if not args:
+            return {"response": "pdf命令需要子命令。输入 'help pdf' 查看用法。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand == 'upload':
+            filename = sub_args[0] if sub_args else None
+            options = self._parse_options(sub_args[1:] if sub_args else [])
+            
+            return {
+                "response": f"上传PDF文件: {filename or '交互式选择'}",
+                "command": {
+                    "type": "file_operation",
+                    "action": "upload_pdf",
+                    "params": {
+                        "filename": filename,
+                        "course": options.get("course")
+                    }
+                }
+            }
+            
+        elif subcommand in ['open', 'show', 'load']:
+            if not sub_args:
+                return {"response": "请指定PDF文件名", "command": None}
+                
+            filename = sub_args[0]
+            options = self._parse_options(sub_args[1:])
+            
+            return {
+                "response": f"打开PDF文件: {filename}",
+                "command": {
+                    "type": "window_operation",
+                    "action": "open_pdf",
+                    "params": {
+                        "filename": filename,
+                        "page": options.get("page", 1)
+                    }
+                }
+            }
+            
+        elif subcommand == 'goto':
+            if not sub_args:
+                return {"response": "请指定页码", "command": None}
+                
+            try:
+                page = int(sub_args[0])
+                return {
+                    "response": f"跳转到第{page}页",
+                    "command": {
+                        "type": "navigation",
+                        "action": "goto_page",
+                        "params": {"page": page}
+                    }
+                }
+            except ValueError:
+                return {"response": "页码必须是数字", "command": None}
+                
+        elif subcommand in ['next', 'prev', 'first', 'last']:
+            return {
+                "response": f"PDF导航: {subcommand}",
+                "command": {
+                    "type": "navigation",
+                    "action": f"{subcommand}_page",
+                    "params": {}
+                }
+            }
+            
+        elif subcommand == 'page':
+            if not sub_args:
+                return {"response": "请指定页面偏移（如 +5 或 -3）", "command": None}
+                
+            offset_str = sub_args[0]
+            try:
+                if offset_str.startswith(('+', '-')):
+                    offset = int(offset_str)
+                    return {
+                        "response": f"页面偏移: {offset}",
+                        "command": {
+                            "type": "navigation",
+                            "action": "offset_page",
+                            "params": {"offset": offset}
+                        }
+                    }
+                else:
+                    return {"response": "页面偏移必须以+或-开始", "command": None}
+            except ValueError:
+                return {"response": "无效的页面偏移格式", "command": None}
+                
+        elif subcommand in ['close', 'closeall']:
+            filename = sub_args[0] if sub_args and subcommand == 'close' else None
+            return {
+                "response": f"关闭PDF: {filename or '所有PDF' if subcommand == 'closeall' else '当前PDF'}",
+                "command": {
+                    "type": "window_operation",
+                    "action": "close_pdf",
+                    "params": {
+                        "filename": filename,
+                        "close_all": subcommand == 'closeall'
+                    }
+                }
+            }
+            
+        elif subcommand in ['list', 'ls']:
+            show_all = "--all" in sub_args
+            return {
+                "response": f"列出PDF文件: {'所有文件' if show_all else '当前展板'}",
+                "command": {
+                    "type": "file_operation",
+                    "action": "list_pdfs",
+                    "params": {"show_all": show_all}
+                }
+            }
+            
+        elif subcommand == 'status':
+            return {
+                "response": "显示PDF状态",
+                "command": {
+                    "type": "window_operation",
+                    "action": "get_pdf_status",
+                    "params": {}
+                }
+            }
+        else:
+            return {"response": f"未知的pdf子命令: {subcommand}", "command": None}
+    
+    def _handle_note(self, args):
+        """处理note命令 - 笔记管理"""
+        if not args:
+            return {"response": "note命令需要子命令。输入 'help note' 查看用法。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand in ['generate', 'gen']:
+            options = self._parse_options(sub_args)
+            return {
+                "response": "生成笔记",
+                "command": {
+                    "type": "content_generation",
+                    "action": "generate_note",
+                    "params": {
+                        "note_type": options.get("type", "summary"),
+                        "pages": options.get("pages"),
+                        "manual": "--manual" in sub_args
+                    }
+                }
+            }
+            
+        elif subcommand == 'annotate':
+            options = self._parse_options(sub_args)
+            return {
+                "response": "生成页面注释",
+                "command": {
+                    "type": "content_generation", 
+                    "action": "generate_annotation",
+                    "params": {
+                        "force_vision": "--vision" in sub_args,
+                        "style": options.get("style", "detailed")
+                    }
+                }
+            }
+            
+        elif subcommand == 'improve':
+            if not sub_args:
+                return {"response": "请指定改进要求", "command": None}
+                
+            improve_request = ' '.join(sub_args)
+            return {
+                "response": f"改进注释: {improve_request}",
+                "command": {
+                    "type": "content_generation",
+                    "action": "improve_annotation", 
+                    "params": {"improve_request": improve_request}
+                }
+            }
+            
+        elif subcommand in ['show', 'edit', 'save']:
+            return {
+                "response": f"笔记操作: {subcommand}",
+                "command": {
+                    "type": "window_operation",
+                    "action": f"{subcommand}_note",
+                    "params": {}
+                }
+            }
+            
+        elif subcommand == 'export':
+            options = self._parse_options(sub_args)
+            format_type = options.get("format", "md")
+            
+            return {
+                "response": f"导出笔记为{format_type}格式",
+                "command": {
+                    "type": "content_generation",
+                    "action": "export_note",
+                    "params": {"format": format_type}
+                }
+            }
+        else:
+            return {"response": f"未知的note子命令: {subcommand}", "command": None}
+    
+    def _handle_board_note(self, args):
+        """处理board-note命令 - 展板笔记管理"""
+        if not args:
+            return {"response": "board-note命令需要子命令。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand in ['generate', 'gen']:
+            comprehensive = "--comprehensive" in sub_args
+            return {
+                "response": f"生成展板笔记: {'综合' if comprehensive else '标准'}",
+                "command": {
+                    "type": "content_generation",
+                    "action": "generate_board_note",
+                    "params": {"comprehensive": comprehensive}
+                }
+            }
+            
+        elif subcommand == 'show':
+            return {
+                "response": "显示展板笔记",
+                "command": {
+                    "type": "content_generation",
+                    "action": "show_board_note",
+                    "params": {}
+                }
+            }
+            
+        elif subcommand == 'improve':
+            if not sub_args:
+                return {"response": "请指定改进要求", "command": None}
+                
+            improve_request = ' '.join(sub_args)
+            return {
+                "response": f"改进展板笔记: {improve_request}",
+                "command": {
+                    "type": "content_generation",
+                    "action": "improve_board_note",
+                    "params": {"improve_request": improve_request}
+                }
+            }
+        else:
+            return {"response": f"未知的board-note子命令: {subcommand}", "command": None}
+    
+    def _handle_expert(self, args):
+        """处理expert命令 - 专家系统"""
+        if not args:
+            return {"response": "expert命令需要子命令。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand == 'start':
+            return {
+                "response": "启动专家对话",
+                "command": {
+                    "type": "expert_interaction",
+                    "action": "start_chat",
+                    "params": {}
+                }
+            }
+            
+        elif subcommand in ['chat', 'ask']:
+            if not sub_args:
+                return {"response": "请提供问题或咨询内容", "command": None}
+                
+            question = ' '.join(sub_args)
+            return {
+                "response": f"咨询专家: {question}",
+                "command": {
+                    "type": "expert_interaction",
+                    "action": "ask_question",
+                    "params": {"question": question}
+                }
+            }
+            
+        elif subcommand == 'mode':
+            if not sub_args:
+                return {"response": "请指定模式: intelligent 或 simple", "command": None}
+                
+            mode = sub_args[0]
+            if mode not in ['intelligent', 'simple']:
+                return {"response": "模式必须是 intelligent 或 simple", "command": None}
+                
+            return {
+                "response": f"设置专家模式: {mode}",
+                "command": {
+                    "type": "expert_interaction",
+                    "action": "set_mode",
+                    "params": {"mode": mode}
+                }
+            }
+            
+        elif subcommand == 'task':
+            if not sub_args:
+                return {"response": "请指定任务类型", "command": None}
+                
+            task_type = sub_args[0]
+            async_mode = "--async" in sub_args
+            
+            return {
+                "response": f"执行专家任务: {task_type}",
+                "command": {
+                    "type": "expert_interaction",
+                    "action": "execute_task",
+                    "params": {
+                        "task_type": task_type,
+                        "async": async_mode
+                    }
+                }
+            }
+            
+        elif subcommand == 'status':
+            return {
+                "response": "查看专家状态",
+                "command": {
+                    "type": "expert_interaction",
+                    "action": "get_status",
+                    "params": {}
+                }
+            }
+        else:
+            return {"response": f"未知的expert子命令: {subcommand}", "command": None}
+    
+    def _handle_status(self, args):
+        """处理status命令 - 系统状态"""
+        verbose = "--verbose" in args or "-v" in args
+        json_output = "--json" in args
+        api_check = "api" in args
+        
+        if api_check:
+            return {
+                "response": "检查API状态",
+                "command": {
+                    "type": "system_query",
+                    "action": "check_api_status",
+                    "params": {"verbose": verbose}
+                }
+            }
+        else:
+            return {
+                "response": "显示系统状态",
+                "command": {
+                    "type": "system_query",
+                    "action": "get_system_status",
+                    "params": {
+                        "verbose": verbose,
+                        "json": json_output
+                    }
+                }
+            }
+    
+    def _handle_config(self, args):
+        """处理config命令 - 配置管理"""
+        if not args:
+            return {"response": "config命令需要子命令。", "command": None}
+        
+        subcommand = args[0]
+        sub_args = args[1:]
+        
+        if subcommand == 'show':
+            return {
+                "response": "显示当前配置",
+                "command": {
+                    "type": "system_config",
+                    "action": "show_config",
+                    "params": {}
+                }
+            }
+            
+        elif subcommand == 'set':
+            if len(sub_args) < 2:
+                return {"response": "set需要提供配置项和值", "command": None}
+                
+            config_key, config_value = sub_args[0], sub_args[1]
+            return {
+                "response": f"设置配置: {config_key} = {config_value}",
+                "command": {
+                    "type": "system_config",
+                    "action": "set_config",
+                    "params": {
+                        "key": config_key,
+                        "value": config_value
+                    }
+                }
+            }
+            
+        elif subcommand == 'reset':
+            return {
+                "response": "重置配置",
+                "command": {
+                    "type": "system_config",
+                    "action": "reset_config",
+                    "params": {}
+                }
+            }
+        else:
+            return {"response": f"未知的config子命令: {subcommand}", "command": None}
+    
+    def _handle_help(self, args):
+        """处理help命令 - 帮助系统"""
+        if not args:
+            help_text = """
+🎯 WhatNote CLI 指令体系
+
+📚 主要命令分类：
+
+🗂️ 基础导航：
+  pwd                        显示当前位置
+  cd <path>                  切换目录 (/, courses, boards/board-123)
+  ls [options] [path]        列出内容 (-l详细, -a全部, --type=pdf)
+
+📁 课程管理：
+  course create "名称"       创建课程文件夹
+  course list                列出所有课程
+  course delete "名称"       删除课程
+  course rename "旧" "新"    重命名课程
+
+🎯 展板管理：
+  board create "名称"        创建展板
+  board open "名称"          打开展板
+  board list                 列出展板
+  board close                关闭当前展板
+
+📄 PDF管理：
+  pdf upload ["文件名"]      上传PDF文件
+  pdf open "文件名"          打开PDF
+  pdf goto <页码>            跳转到指定页
+  pdf next/prev              翻页导航
+  pdf close                  关闭PDF
+
+📝 笔记管理：
+  note generate              生成笔记
+  note annotate              生成注释
+  note improve "要求"        改进注释
+  note export --format=md    导出笔记
+
+🤖 专家系统：
+  expert start               启动专家对话
+  expert chat "问题"         咨询专家
+  expert mode intelligent    切换智能模式
+
+🔧 系统工具：
+  status                     显示系统状态
+  config show                显示配置
+  find --name="*.pdf"        搜索文件
+  history                    命令历史
+
+💡 快捷技巧：
+  • 使用引号包含含空格的参数："文件名称"
+  • 支持选项参数：--type=pdf, --verbose
+  • 上下键浏览历史命令
+  • Tab键自动补全命令（开发中）
+  • 支持自然语言：直接描述需求即可
+
+📖 使用示例：
+  course create "机器学习"
+  board create "第一章" --course="机器学习"
+  pdf upload "教材.pdf"
+  note generate --type=summary
+
+输入 'help <命令>' 查看具体命令详情。
+支持中英文混合输入，自然语言和CLI指令智能识别。
+"""
+            return {"response": help_text.strip(), "command": None}
+        else:
+            command = args[0]
+            # 返回特定命令的详细帮助
+            return {
+                "response": self._get_command_detailed_help(command),
+                "command": {
+                    "type": "system_query",
+                    "action": "get_command_help",
+                    "params": {"command": command}
+                }
+            }
+    
+    def _get_command_detailed_help(self, command):
+        """获取特定命令的详细帮助"""
+        help_details = {
+            'course': """
+📁 course - 课程文件夹管理
+
+语法：course <子命令> [参数] [选项]
+
+子命令：
+  create "名称" [--desc="描述"]     创建新课程文件夹
+  list/ls [--sort=name|date]       列出所有课程
+  show/info "名称"                 显示课程详情
+  rename/mv "旧名" "新名"          重命名课程
+  delete/rm "名称" [--force]       删除课程
+
+示例：
+  course create "深度学习基础"
+  course create "机器学习" --desc="AI入门课程"
+  course list --sort=date
+  course rename "旧课程" "新课程名"
+  course delete "测试课程" --force
+            """,
+            
+            'board': """
+🎯 board - 展板管理
+
+语法：board <子命令> [参数] [选项]
+
+子命令：
+  create "名称" [--course="课程"]   创建新展板
+  open/switch "名称或ID"           打开指定展板
+  list/ls [--active] [--course=""] 列出展板
+  close ["名称"]                   关闭展板
+  delete/rm "名称" [--force]       删除展板
+  status                           显示展板状态
+
+示例：
+  board create "神经网络基础"
+  board create "CNN实验" --course="深度学习"
+  board open "神经网络基础"
+  board list --active
+  board close
+            """,
+            
+            'pdf': """
+📄 pdf - PDF文件管理
+
+语法：pdf <子命令> [参数] [选项]
+
+子命令：
+  upload ["文件名"]                交互式或指定文件上传
+  open/show "文件名" [--page=N]    打开PDF文件
+  goto <页码>                      跳转到指定页
+  next/prev/first/last             页面导航
+  page +N/-N                       相对页面跳转
+  close ["文件名"]                 关闭PDF
+  closeall                         关闭所有PDF
+  list/ls [--all]                  列出PDF文件
+  status                           显示PDF状态
+
+示例：
+  pdf upload "machine_learning.pdf"
+  pdf open "深度学习.pdf" --page=5
+  pdf goto 10
+  pdf next
+  pdf page +5
+            """,
+            
+            'note': """
+📝 note - 笔记与注释管理
+
+语法：note <子命令> [参数] [选项]
+
+子命令：
+  generate/gen [--type=summary|detailed] [--pages=1-10]  生成笔记
+  annotate [--vision] [--style=keywords|detailed]        生成注释
+  improve "改进要求"                                      改进当前注释
+  show/edit/save                                          笔记操作
+  export --format=md|pdf                                  导出笔记
+
+展板笔记：
+  board-note generate [--comprehensive]   生成展板笔记
+  board-note improve "要求"               改进展板笔记
+
+示例：
+  note generate --type=summary
+  note annotate --vision
+  note improve "增加更多实例"
+  note export --format=md
+            """,
+            
+            'expert': """
+🤖 expert - 专家系统交互
+
+语法：expert <子命令> [参数] [选项]
+
+子命令：
+  start                           启动专家对话
+  chat/ask "问题内容"             直接咨询专家
+  mode intelligent|simple         设置专家模式
+  task <任务类型> [--async]       执行专家任务
+  status                          查看专家状态
+
+任务类型：
+  generate-plan                   生成学习计划
+  analyze-structure               分析文档结构
+  generate-notes                  生成笔记
+
+示例：
+  expert start
+  expert chat "解释反向传播算法"
+  expert mode intelligent
+  expert task generate-plan
+            """,
+            
+            'config': """
+🔧 config - 配置管理
+
+语法：config <子命令> [参数]
+
+子命令：
+  show                            显示当前配置
+  set <配置项> <值>               设置配置项
+  reset                           重置所有配置
+
+常用配置项：
+  annotation.style                注释风格 (keywords|detailed)
+  expert.mode                     专家模式 (simple|intelligent)
+  debug.verbose                   详细输出 (true|false)
+
+示例：
+  config show
+  config set annotation.style keywords
+  config set expert.mode intelligent
+            """
+        }
+        
+        return help_details.get(command, f"暂无 '{command}' 命令的详细帮助。\n输入 'help' 查看所有可用命令。")
+    
+    def _handle_find(self, args):
+        """处理find命令 - 搜索"""
+        options = self._parse_options(args)
+        
+        return {
+            "response": "执行搜索",
+            "command": {
+                "type": "system_query",
+                "action": "search",
+                "params": {
+                    "name": options.get("name"),
+                    "type": options.get("type"),
+                    "content": options.get("content"),
+                    "recent": "--recent" in args
+                }
+            }
+        }
+    
+    def _handle_history(self, args):
+        """处理history命令 - 命令历史"""
+        if "--clear" in args:
+            return {
+                "response": "清空命令历史",
+                "command": {
+                    "type": "system_query",
+                    "action": "clear_history",
+                    "params": {}
+                }
+            }
+        else:
+            count = args[0] if args and args[0].isdigit() else None
+            return {
+                "response": f"显示命令历史{f'（最近{count}条）' if count else ''}",
+                "command": {
+                    "type": "system_query",
+                    "action": "get_history",
+                    "params": {"count": int(count) if count else None}
+                }
+            }
+    
+    def _parse_options(self, args):
+        """解析命令行选项"""
+        options = {}
+        i = 0
+        while i < len(args):
+            arg = args[i]
+            if arg.startswith('--'):
+                if '=' in arg:
+                    key, value = arg[2:].split('=', 1)
+                    options[key] = value
+                else:
+                    key = arg[2:]
+                    if i + 1 < len(args) and not args[i + 1].startswith('-'):
+                        i += 1
+                        options[key] = args[i]
+                    else:
+                        options[key] = True
+            elif arg.startswith('-'):
+                key = arg[1:]
+                options[key] = True
+            i += 1
+        return options
+
+    def _extract_command_json(self, response_text):
+        """
+        从LLM响应中提取JSON格式的命令
+        
+        Args:
+            response_text: LLM响应文本
+            
+        Returns:
+            解析后的命令字典或None
+        """
+        import json
+        import re
+        
+        if not response_text:
+            return None
+            
+        try:
+            # 首先尝试直接解析整个响应为JSON
+            if response_text.strip().startswith('{') and response_text.strip().endswith('}'):
+                return json.loads(response_text)
+            
+            # 在响应中查找JSON块
+            json_patterns = [
+                r'\{[^{}]*"type"\s*:\s*"[^"]*"[^{}]*\}',  # 简单的JSON模式
+                r'\{(?:[^{}]|{[^{}]*})*\}',  # 嵌套JSON模式
+            ]
+            
+            for pattern in json_patterns:
+                matches = re.findall(pattern, response_text, re.DOTALL)
+                for match in matches:
+                    try:
+                        command = json.loads(match)
+                        if isinstance(command, dict) and 'type' in command:
+                            return command
+                    except json.JSONDecodeError:
+                        continue
+            
+            # 查找代码块中的JSON
+            code_block_pattern = r'```(?:json)?\s*(\{[^`]*\})\s*```'
+            code_matches = re.findall(code_block_pattern, response_text, re.DOTALL)
+            
+            for match in code_matches:
+                try:
+                    command = json.loads(match)
+                    if isinstance(command, dict) and 'type' in command:
+                        return command
+                except json.JSONDecodeError:
+                    continue
+            
         return None
     
-    def _clean_response_json(self, response):
-        """清理回复，移除JSON命令部分"""
+        except Exception as e:
+            logger.error(f"提取命令JSON失败: {str(e)}")
+            return None
+    
+    def _clean_response_json(self, response_text):
+        """
+        清理响应文本，移除JSON命令部分，只保留用户可读的内容
+        
+        Args:
+            response_text: 原始响应文本
+            
+        Returns:
+            清理后的响应文本
+        """
+        import json
         import re
         
-        # 移除JSON格式的命令
-        cleaned = re.sub(r'```json\s*({[\s\S]*?})\s*```', '', response)
-        cleaned = re.sub(r'({[\s\S]*?})', '', cleaned)
+        if not response_text:
+            return ""
         
-        # 清理多余的空行和空格
-        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        try:
+            # 移除JSON代码块
+            cleaned = re.sub(r'```(?:json)?\s*\{[^`]*\}\s*```', '', response_text, flags=re.DOTALL)
+            
+            # 移除独立的JSON对象
+            json_patterns = [
+                r'\{[^{}]*"type"\s*:\s*"[^"]*"[^{}]*\}',  # 简单的JSON模式
+                r'\{(?:[^{}]|{[^{}]*})*\}',  # 嵌套JSON模式
+            ]
+            
+            for pattern in json_patterns:
+                matches = re.findall(pattern, cleaned, re.DOTALL)
+                for match in matches:
+                    try:
+                        # 验证是否为有效的命令JSON
+                        command = json.loads(match)
+                        if isinstance(command, dict) and 'type' in command:
+                            cleaned = cleaned.replace(match, '')
+                    except json.JSONDecodeError:
+                        continue
+            
+            # 清理多余的空行和空白
+            cleaned = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned)
         cleaned = cleaned.strip()
         
-        return cleaned
+            return cleaned if cleaned else response_text
+            
+        except Exception as e:
+            logger.error(f"清理响应文本失败: {str(e)}")
+            return response_text
     
     def consult_expert(self, board_id, question, context=None):
         """

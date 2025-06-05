@@ -61,26 +61,9 @@ const NoteWindow = ({
     pdf.pageAnnotationLoadings?.[pageNumber] || false : 
     loading;
     
-  console.log('🔄 [DEBUG] 加载状态计算:', {
-    type,
-    pageNumber,
-    currentPageLoading,
-    fallbackLoading: loading,
-    pageAnnotationLoadings: pdf?.pageAnnotationLoadings
-  });
-
   // 使用useEffect监控props变化
   useEffect(() => {
-    console.log('🔄 [DEBUG] NoteWindow props 变化检测:', {
-      type,
-      filename,
-      pageNumber,
-      contentLength: content?.length || 0,
-      contentChanged: content !== displayContent,
-      loading,
-      source
-    });
-  }, [content, type, loading, filename, pageNumber, source]);
+    }, [content, type, loading, filename, pageNumber, source]);
 
   // 安全获取内容
   const safeContent = ensureStringContent(content);
@@ -97,16 +80,6 @@ const NoteWindow = ({
   const [loadingRawText, setLoadingRawText] = useState(false);
   const [autoSaveVisible, setAutoSaveVisible] = useState(false);
 
-  console.log('🎯 [DEBUG] NoteWindow 状态快照:', {
-    displayContentLength: displayContent?.length || 0,
-    displayContentPreview: displayContent?.substring(0, 100) + '...',
-    isEditing,
-    improving,
-    improveModalVisible,
-    isVisionMode,
-    rawTextVisible
-  });
-
   // 监听内容变化
   useEffect(() => {
     console.log('🔄 [DEBUG] NoteWindow content props 变化:', {
@@ -118,12 +91,10 @@ const NoteWindow = ({
     });
     
     if (safeContent !== displayContent) {
-      console.log('📝 [DEBUG] 更新 displayContent');
       setDisplayContent(safeContent);
       
       // 如果正在改进中且内容发生变化，停止改进状态
       if (improving) {
-        console.log('🛑 [DEBUG] 检测到内容更新，停止改进状态');
         setImproving(false);
       }
     }
@@ -131,8 +102,7 @@ const NoteWindow = ({
 
   // 监听改进状态变化
   useEffect(() => {
-    console.log('🔄 [DEBUG] NoteWindow - 改进状态变化:', improving);
-  }, [improving]);
+    }, [improving]);
 
   // 自动保存计时器ref
   const autoSaveTimerRef = useRef(null);
@@ -373,13 +343,6 @@ const NoteWindow = ({
       originalType: typeof content,
       safeContentPreview: safeContent ? `${safeContent.substring(0, 50)}${safeContent.length > 50 ? '...' : ''}` : '无内容',
       safeContentLength: safeContent?.length || 0
-    });
-    
-    console.log('NoteWindow当前状态:', {
-      isEditing,
-      improving,
-      type,
-      displayContentLength: displayContent?.length || 0
     });
     
     // 当改进中或非编辑状态时，更新显示内容

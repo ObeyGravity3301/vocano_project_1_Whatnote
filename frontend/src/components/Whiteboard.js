@@ -366,8 +366,6 @@ const Whiteboard = forwardRef(({ elements, onChange, boardId }, ref) => {
     };
   }, [handleContextMenu]);
 
-  console.log('🔄 Whiteboard组件渲染');
-
   return (
     <div className="excalidraw-wrapper" style={{ height: "100%", width: "100%", position: "relative" }}>
       <Excalidraw

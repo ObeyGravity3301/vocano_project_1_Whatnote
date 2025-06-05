@@ -69,8 +69,8 @@ pids
 .env.test.local
 .env.production.local
 
-# 配置文件（保留示例）
-.env.example
+# 保留环境变量示例文件
+# .env.example
 
 # ===== 日志文件 =====
 # 所有类型日志
@@ -141,12 +141,18 @@ build/
 dist-electron/
 release-builds/
 
-# ===== 测试文件 =====
-# 测试相关（可选择性忽略）
+# ===== 测试和调试文件 =====
+# 测试相关
 test_*.py
 *_test.py
+debug_*.py
+fix_*.py
+check_*.py
+complete_*.py
+quick_*.py
+demo_*.py
 
-# 性能测试和调试文件
+# 特定测试文件模式
 test_annotation_*.py
 test_ai_*.py
 test_complete_*.py
@@ -168,6 +174,11 @@ test_task_*.py
 test_usernoteeditor_*.py
 test_vision_*.py
 
+# 调试和修复脚本
+comprehensive_fix.py
+final_fix.py
+simple_*.py
+
 # 报告文件
 naming_consistency_report_*.txt
 
@@ -175,14 +186,10 @@ naming_consistency_report_*.txt
 # 调试和测试页面
 frontend_debug.html
 mcp_test_frontend.html
-
-# ===== 文档和指南（可选） =====
-# 如果不想提交某些文档，可以取消注释
-*.md
-!README.md
+test_frontend_*.html
 
 # ===== 其他 =====
-# 包锁定文件（可选择性忽略）
+# 包锁定文件（根据需要可选择性忽略）
 # package-lock.json
 
 # 运行时生成的文件

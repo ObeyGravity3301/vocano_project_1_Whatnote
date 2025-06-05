@@ -70,6 +70,41 @@ const api = {
   // 导出基础URL获取函数
   getBaseUrl,
   
+  // 通用HTTP方法
+  get: (endpoint, options = {}) => {
+    return apiRequest(endpoint, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      ...options
+    });
+  },
+  
+  post: (endpoint, data = null, options = {}) => {
+    return apiRequest(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: data ? JSON.stringify(data) : null,
+      ...options
+    });
+  },
+  
+  put: (endpoint, data = null, options = {}) => {
+    return apiRequest(endpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: data ? JSON.stringify(data) : null,
+      ...options
+    });
+  },
+  
+  delete: (endpoint, options = {}) => {
+    return apiRequest(endpoint, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      ...options
+    });
+  },
+  
   // 获取应用状态
   getAppState: () => apiRequest('/app-state'),
   
