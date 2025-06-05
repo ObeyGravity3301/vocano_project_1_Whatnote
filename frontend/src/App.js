@@ -3955,7 +3955,10 @@ function App() {
         onBringToFront={() => handleBringWindowToFront(pdf.id, windowType)}
         isPinned={isPinned}
         onTogglePin={() => handleToggleWindowPin(windowId)}
-        titleBarColor={getPdfColor(pdf.id)}
+        titleBarColor={getPdfCurrentColor(pdf.id) || getPdfColor(pdf.id)}
+        showColorPicker={true}
+        onColorChange={(color) => updatePdfColor(pdf.id, color)}
+        currentColor={getPdfCurrentColor(pdf.id)}
         resizable
       >
         {content}
@@ -4167,11 +4170,16 @@ function App() {
       <Header className="app-header">
         <div className="logo">WhatNote - 智能笔记系统</div>
         <div className="header-buttons">
-          <Tooltip title="快捷键提示">
+          <Tooltip title="快捷键帮助 (Ctrl+/)">
             <Button
               icon={<QuestionCircleOutlined />}
               onClick={() => {
-                const event = new CustomEvent('whatnote-show-shortcuts');
+                // 触发快捷键帮助
+                const event = new KeyboardEvent('keydown', {
+                  key: '/',
+                  ctrlKey: true,
+                  bubbles: true
+                });
                 window.dispatchEvent(event);
               }}
               size="small"
