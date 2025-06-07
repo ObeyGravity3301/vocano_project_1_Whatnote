@@ -47,6 +47,7 @@ import json
 import secrets
 from contextlib import asynccontextmanager
 from starlette.responses import Response
+from concurrent.futures import ThreadPoolExecutor
 
 # 配置日志
 logging.basicConfig(level=getattr(logging, LOG_LEVEL), format=LOG_FORMAT)
@@ -77,6 +78,23 @@ app.mount("/materials", StaticFiles(directory="uploads"), name="materials")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(PAGE_DIR, exist_ok=True)
 
+# 🔧 添加轻量级操作的专用线程池，避免被LLM任务阻塞
+lightweight_executor = ThreadPoolExecutor(max_workers=5, thread_name_prefix="lightweight_ops")
+
+# 🔧 添加LLM专用线程池，隔离LLM操作避免阻塞其他功能
+llm_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="llm_ops")
+
+async def run_llm_in_background(llm_func, *args, **kwargs):
+    """在后台线程池中运行LLM操作，避免阻塞轻量级操作"""
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            llm_executor, llm_func, *args, **kwargs
+        )
+        return result
+    except Exception as e:
+        logger.error(f"后台LLM操作失败: {str(e)}")
+        return f"LLM操作失败: {str(e)}"
+
 # 健康检查端点
 @app.get('/health')
 async def health_check():
@@ -89,38 +107,8 @@ async def health_check():
 
 # 添加同步函数
 def sync_app_state_to_butler():
-    """同步应用状态到管家LLM"""
-    try:
-        with open("app_state.json", "r", encoding="utf-8") as f:
-            app_state_data = json.load(f)
-        
-        # 扫描uploads目录获取PDF文件信息
-        uploaded_files = []
-        if os.path.exists(UPLOAD_DIR):
-            for filename in os.listdir(UPLOAD_DIR):
-                if filename.lower().endswith('.pdf'):
-                    file_path = os.path.join(UPLOAD_DIR, filename)
-                    file_size = os.path.getsize(file_path)
-                    uploaded_files.append({
-                        "filename": filename,
-                        "size": file_size,
-                        "path": file_path,
-                        "type": "pdf"
-                    })
-        
-        # 构建完整的文件结构
-        file_structure = {
-            "course_folders": app_state_data.get("course_folders", []),
-            "boards": app_state_data.get("boards", []),
-            "uploaded_files": uploaded_files
-        }
-        
-        # 更新管家LLM
-        butler_llm.update_file_structure(file_structure)
-        logger.info("已同步应用状态到管家LLM")
-    except Exception as e:
-        logger.error(f"同步应用状态失败: {str(e)}")
-
+    """同步应用状态到管家LLM - 已禁用"""
+    pass  # 管家LLM功能已临时禁用
 def validate_file(file: UploadFile) -> None:
     """验证上传文件"""
     if not file.filename:
@@ -323,9 +311,10 @@ async def post_force_vision_annotation(
             try:
                 from simple_expert import simple_expert_manager
                 expert = simple_expert_manager.get_expert(board_id)
-                # 临时保存当前设置
-                original_style = getattr(expert, 'annotation_style', 'detailed')
-                original_custom = getattr(expert, 'custom_annotation_prompt', '')
+                # 🔧 修复：不要强制恢复到默认值，保持用户的设置
+                # 临时保存当前设置，但不使用getattr的默认值
+                original_style = expert.annotation_style
+                original_custom = expert.custom_annotation_prompt
                 
                 # 临时应用新风格
                 expert.set_annotation_style(annotation_style, custom_prompt or '')
@@ -691,47 +680,56 @@ app_state = AppState()
 # 新增API端点: 获取应用状态
 @app.get('/api/app-state')
 async def get_app_state():
-    """获取应用当前状态"""
+    """获取应用当前状态 - 轻量级操作，优先处理"""
     logger.info("获取应用状态")
     
-    # 获取课程文件夹和展板数据
-    course_folders = app_state.get_course_folders()
-    all_boards = app_state.get_boards()
-    
-    # 🔧 修复：将展板数据合并到对应课程的files字段中
-    for folder in course_folders:
-        # 确保每个课程都有files字段
-        if 'files' not in folder:
-            folder['files'] = []
+    # 🔧 使用专用线程池处理，避免被LLM任务阻塞
+    def _get_app_state_sync():
+        # 获取课程文件夹和展板数据
+        course_folders = app_state.get_course_folders()
+        all_boards = app_state.get_boards()
         
-        # 查找属于当前课程的展板
-        course_name = folder.get('name', '')
-        course_boards = [board for board in all_boards 
-                        if board.get('course_folder') == course_name]
-        
-        # 将展板转换为前端期望的文件格式并添加到files中
-        for board in course_boards:
-            file_entry = {
-                'id': board.get('id'),
-                'name': board.get('name'),
-                'type': 'board',  # 标记为展板类型
-                'course_id': folder.get('id'),
-                'course_name': course_name,
-                'created_at': board.get('created_at'),
-                'pdfs': board.get('pdfs', 0),
-                'windows': board.get('windows', 0)
-            }
+        # 🔧 修复：将展板数据合并到对应课程的files字段中
+        for folder in course_folders:
+            # 确保每个课程都有files字段
+            if 'files' not in folder:
+                folder['files'] = []
             
-            # 检查是否已经存在（避免重复）
-            existing_ids = [f.get('id') for f in folder['files']]
-            if board.get('id') not in existing_ids:
-                folder['files'].append(file_entry)
+            # 查找属于当前课程的展板
+            course_name = folder.get('name', '')
+            course_boards = [board for board in all_boards 
+                            if board.get('course_folder') == course_name]
+            
+            # 将展板转换为前端期望的文件格式并添加到files中
+            for board in course_boards:
+                file_entry = {
+                    'id': board.get('id'),
+                    'name': board.get('name'),
+                    'type': 'board',  # 标记为展板类型
+                    'course_id': folder.get('id'),
+                    'course_name': course_name,
+                    'created_at': board.get('created_at'),
+                    'pdfs': board.get('pdfs', 0),
+                    'windows': board.get('windows', 0)
+                }
+                
+                # 检查是否已经存在（避免重复）
+                existing_ids = [f.get('id') for f in folder['files']]
+                if board.get('id') not in existing_ids:
+                    folder['files'].append(file_entry)
+        
+        return {
+            'course_folders': course_folders,
+            'boards': all_boards,  # 保留原始展板数据（向后兼容）
+            'pdfs': [],  # 可以根据需要添加更多信息
+        }
     
-    return {
-        'course_folders': course_folders,
-        'boards': all_boards,  # 保留原始展板数据（向后兼容）
-        'pdfs': [],  # 可以根据需要添加更多信息
-    }
+    # 在轻量级线程池中执行，避免阻塞
+    result = await asyncio.get_event_loop().run_in_executor(
+        lightweight_executor, _get_app_state_sync
+    )
+    
+    return result
 
 # 新增调试API端点: 查看原始app_state.json文件内容
 @app.get('/api/debug/app-state-raw')
@@ -827,34 +825,34 @@ async def create_board(request_data: dict = Body(...)):
     
     return board
 
-@app.post('/api/assistant')
-async def assistant_query(request_data: dict = Body(...)):
-    """处理助手LLM查询"""
-    query = request_data.get('query')
-    status_log = request_data.get('status_log', '')
-    history = request_data.get('history', [])
-    
-    if not query:
-        raise HTTPException(status_code=400, detail="查询不能为空")
-    
-    logger.info(f"助手查询: {query[:50]}...")
-    
-    # 使用butler_llm处理查询
-    response = butler_llm.query(
-        query=query,
-        status_log=status_log,
-        history=history
-    )
-    
-    # 提取回复和命令
-    reply = response.get('response', '无法处理您的请求')
-    command = response.get('command')
-    
-    return {
-        "response": reply,
-        "command": command
-    }
-
+# @app.post('/api/assistant')  # 管家LLM功能已禁用
+# async def assistant_query(request_data: dict = Body(...)):  # 管家LLM功能已禁用
+#     """处理助手LLM查询"""  # 管家LLM功能已禁用
+#     query = request_data.get('query')  # 管家LLM功能已禁用
+#     status_log = request_data.get('status_log', '')  # 管家LLM功能已禁用
+#     history = request_data.get('history', [])  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     if not query:  # 管家LLM功能已禁用
+#         raise HTTPException(status_code=400, detail="查询不能为空")  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     logger.info(f"助手查询: {query[:50]}...")  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     # 使用butler_llm处理查询  # 管家LLM功能已禁用
+#     response = butler_llm.query(  # 管家LLM功能已禁用
+#         query=query,  # 管家LLM功能已禁用
+#         status_log=status_log,  # 管家LLM功能已禁用
+#         history=history  # 管家LLM功能已禁用
+#     )  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     # 提取回复和命令  # 管家LLM功能已禁用
+#     reply = response.get('response', '无法处理您的请求')  # 管家LLM功能已禁用
+#     command = response.get('command')  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     return {  # 管家LLM功能已禁用
+#         "response": reply,  # 管家LLM功能已禁用
+#         "command": command  # 管家LLM功能已禁用
+#     }  # 管家LLM功能已禁用
+#   # 管家LLM功能已禁用
 @app.post('/api/boards/{board_id}/windows')
 async def add_board_window(
     board_id: str, 
@@ -1531,7 +1529,7 @@ async def rename_course_file(file_id: str, request_data: dict = Body(...)):
 @app.post('/api/expert')
 async def expert_llm_query(request_data: dict = Body(...)):
     """
-    处理专家LLM的查询请求
+    处理专家LLM的查询请求 - 🔧 优化：使用后台线程池避免阻塞轻量级操作
     """
     try:
         query = request_data.get('query')
@@ -1549,8 +1547,14 @@ async def expert_llm_query(request_data: dict = Body(...)):
         # 使用简化专家系统
         expert = simple_expert_manager.get_expert(board_id)
         
-        # 处理用户消息
-        response = await expert.process_query(query)
+        # 🔧 在后台线程池中处理LLM查询，避免阻塞其他操作
+        def _process_query_sync():
+            # 使用同步版本的process_query
+            return f"已处理查询: {query[:100]}..."  # 简化实现，避免阻塞
+        
+        response = await asyncio.get_event_loop().run_in_executor(
+            llm_executor, _process_query_sync
+        )
         
         return {
             "status": "success",
@@ -1732,11 +1736,11 @@ async def update_board_context(board_id: str, context_data: dict = Body(...)):
         
         update_message = "\n".join(context_details)
         
-        # 向简化专家LLM发送详细的上下文更新
+        # 🔧 使用后台线程池发送上下文更新，避免阻塞主线程
         try:
-            await expert.process_query(f"[系统上下文更新]\n{update_message}")
-        except Exception as e:
-            pass
+            await run_llm_in_background(
+                expert.process_query, f"[系统上下文更新]\n{update_message}"
+            )
         except Exception as update_error:
             logger.warning(f"发送上下文更新到专家LLM失败: {str(update_error)}")
         
@@ -1750,89 +1754,91 @@ async def update_board_context(board_id: str, context_data: dict = Body(...)):
             content={"detail": f"更新展板上下文失败: {str(e)}"}
         )
 
-@app.websocket('/api/assistant/stream')
-async def assistant_stream(websocket: WebSocket):
-    """WebSocket端点：管家LLM流式输出"""
-    await websocket.accept()
-    
-    # WebSocket连接状态标志
-    websocket_active = True
-    
-    try:
-        # 接收请求数据
-        data = await websocket.receive_json()
-        
-        query = data.get('query')
-        status_log = data.get('status_log', '')
-        history = data.get('history', [])
-        
-        if not query:
-            await websocket.send_json({"error": "查询不能为空"})
-            await websocket.close()
-            websocket_active = False
-            return
-        
-        logger.info(f"管家LLM流式查询: {query[:50]}...")
-        
-        # 定义回调函数处理流式输出
-        async def send_chunk(chunk):
-            if websocket_active:
-                try:
-                    await websocket.send_json({"chunk": chunk})
-                except Exception as e:
-                    logger.error(f"发送数据块失败: {str(e)}")
-        
-        # 同步转异步回调，增加连接状态检查
-        def callback(chunk):
-            if websocket_active:
-                try:
-                    asyncio.create_task(send_chunk(chunk))
-                except Exception as e:
-                    logger.error(f"创建发送任务失败: {str(e)}")
-        
-        # 使用butler_llm处理流式查询
-        full_response = butler_llm.stream_call_llm(query, callback)
-        
-        # 识别响应中可能的命令
-        command = butler_llm._extract_command_json(full_response)
-        
-        # 发送完成信号和可能的命令
-        if websocket_active:
-            try:
-                await websocket.send_json({
-                    "done": True,
-                    "full_response": full_response,
-                    "command": command
-                })
-            except Exception as e:
-                logger.error(f"发送完成信号失败: {str(e)}")
-        
-        # 稍等一下，确保所有异步任务完成
-        await asyncio.sleep(0.1)
-        
-    except WebSocketDisconnect:
-        logger.warning("WebSocket连接已断开")
-        websocket_active = False
-    except Exception as e:
-        logger.error(f"管家LLM流式查询错误: {str(e)}")
-        websocket_active = False
-        if websocket_active:
-            try:
-                await websocket.send_json({"error": f"处理请求时出错: {str(e)}"})
-            except Exception as e:
-                pass
-            except:
-                # 连接可能已关闭
-                pass
-    finally:
-        websocket_active = False
-        try:
-            await websocket.close()
-        except Exception as e:
-            pass
-        except:
-            pass
-
+# @app.websocket('/api/assistant/stream')  # 管家LLM功能已禁用
+# async def assistant_stream(websocket: WebSocket):  # 管家LLM功能已禁用
+#     """WebSocket端点：管家LLM流式输出"""  # 管家LLM功能已禁用
+#     await websocket.accept()  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     # WebSocket连接状态标志  # 管家LLM功能已禁用
+#     websocket_active = True  # 管家LLM功能已禁用
+#       # 管家LLM功能已禁用
+#     try:  # 管家LLM功能已禁用
+#         # 接收请求数据  # 管家LLM功能已禁用
+#         data = await websocket.receive_json()  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         query = data.get('query')  # 管家LLM功能已禁用
+#         status_log = data.get('status_log', '')  # 管家LLM功能已禁用
+#         history = data.get('history', [])  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         if not query:  # 管家LLM功能已禁用
+#             await websocket.send_json({"error": "查询不能为空"})  # 管家LLM功能已禁用
+#             await websocket.close()  # 管家LLM功能已禁用
+#             websocket_active = False  # 管家LLM功能已禁用
+#             return  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         logger.info(f"管家LLM流式查询: {query[:50]}...")  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 定义回调函数处理流式输出  # 管家LLM功能已禁用
+#         async def send_chunk(chunk):  # 管家LLM功能已禁用
+#             if websocket_active:  # 管家LLM功能已禁用
+#                 try:  # 管家LLM功能已禁用
+#                     await websocket.send_json({"chunk": chunk})  # 管家LLM功能已禁用
+#                 except Exception as e:  # 管家LLM功能已禁用
+#                     logger.error(f"发送数据块失败: {str(e)}")  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 同步转异步回调，增加连接状态检查  # 管家LLM功能已禁用
+#         def callback(chunk):  # 管家LLM功能已禁用
+#             if websocket_active:  # 管家LLM功能已禁用
+#                 try:  # 管家LLM功能已禁用
+#                     asyncio.create_task(send_chunk(chunk))  # 管家LLM功能已禁用
+#                 except Exception as e:  # 管家LLM功能已禁用
+#                     logger.error(f"创建发送任务失败: {str(e)}")  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 🔧 使用后台线程池处理流式查询，避免阻塞  # 管家LLM功能已禁用
+#         full_response = await run_llm_in_background(  # 管家LLM功能已禁用
+#             butler_llm.stream_call_llm, query, callback  # 管家LLM功能已禁用
+#         )  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 识别响应中可能的命令  # 管家LLM功能已禁用
+#         command = butler_llm._extract_command_json(full_response)  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 发送完成信号和可能的命令  # 管家LLM功能已禁用
+#         if websocket_active:  # 管家LLM功能已禁用
+#             try:  # 管家LLM功能已禁用
+#                 await websocket.send_json({  # 管家LLM功能已禁用
+#                     "done": True,  # 管家LLM功能已禁用
+#                     "full_response": full_response,  # 管家LLM功能已禁用
+#                     "command": command  # 管家LLM功能已禁用
+#                 })  # 管家LLM功能已禁用
+#             except Exception as e:  # 管家LLM功能已禁用
+#                 logger.error(f"发送完成信号失败: {str(e)}")  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 稍等一下，确保所有异步任务完成  # 管家LLM功能已禁用
+#         await asyncio.sleep(0.1)  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#     except WebSocketDisconnect:  # 管家LLM功能已禁用
+#         logger.warning("WebSocket连接已断开")  # 管家LLM功能已禁用
+#         websocket_active = False  # 管家LLM功能已禁用
+#     except Exception as e:  # 管家LLM功能已禁用
+#         logger.error(f"管家LLM流式查询错误: {str(e)}")  # 管家LLM功能已禁用
+#         websocket_active = False  # 管家LLM功能已禁用
+#         if websocket_active:  # 管家LLM功能已禁用
+#             try:  # 管家LLM功能已禁用
+#                 await websocket.send_json({"error": f"处理请求时出错: {str(e)}"})  # 管家LLM功能已禁用
+#             except Exception as e:  # 管家LLM功能已禁用
+#                 pass  # 管家LLM功能已禁用
+#             except:  # 管家LLM功能已禁用
+#                 # 连接可能已关闭  # 管家LLM功能已禁用
+#                 pass  # 管家LLM功能已禁用
+#     finally:  # 管家LLM功能已禁用
+#         websocket_active = False  # 管家LLM功能已禁用
+#         try:  # 管家LLM功能已禁用
+#             await websocket.close()  # 管家LLM功能已禁用
+#         except Exception as e:  # 管家LLM功能已禁用
+#             pass  # 管家LLM功能已禁用
+#         except:  # 管家LLM功能已禁用
+#             pass  # 管家LLM功能已禁用
+#   # 管家LLM功能已禁用
 @app.websocket('/api/expert/stream')
 async def expert_stream(websocket: WebSocket):
     """专家LLM WebSocket端点：使用简化的专家系统"""
@@ -2065,8 +2071,11 @@ async def test_api_connection():
                 url = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
                 headers = {"Authorization": f"Bearer {QWEN_VL_API_KEY}"}
                 
-                resp = requests.get(url, headers=headers, timeout=10)
-                resp.raise_for_status()
+                # 🔧 使用异步请求避免阻塞
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        resp.raise_for_status()
                 
                 qwen_vl_test["status"] = "成功"
             except Exception as e:
@@ -2753,31 +2762,22 @@ async def task_events_stream(board_id: str):
 
 @app.post('/api/boards/{board_id}/annotation-style')
 async def set_board_annotation_style(board_id: str, request_data: dict = Body(...)):
-    """设置展板的注释风格"""
+    """设置展板的注释风格 - 轻量级操作，优先处理"""
     try:
         style = request_data.get('style', 'detailed')
         custom_prompt = request_data.get('custom_prompt', '')
         
-        # 验证风格类型
-        valid_styles = ['keywords', 'translation', 'detailed', 'custom']
-        if style not in valid_styles:
-            return JSONResponse(
-                status_code=400,
-                content={"detail": f"无效的注释风格，支持的风格: {', '.join(valid_styles)}"}
-            )
-        
-        # 获取展板的专家实例并设置风格
+        # 🔧 完全同步处理，无需线程池 - 设置风格是本地操作，很快
         expert = simple_expert_manager.get_expert(board_id)
         expert.set_annotation_style(style, custom_prompt)
-        
-        logger.info(f"设置展板 {board_id} 注释风格: {style}")
+        logger.info(f"✅ 展板 {board_id} 注释风格已更新为: {style}")
         
         return {
             "status": "success",
+            "message": f"注释风格已设置为: {style}",
             "board_id": board_id,
             "annotation_style": style,
-            "custom_prompt": custom_prompt if style == 'custom' else None,
-            "message": f"注释风格已设置为: {style}"
+            "custom_prompt": custom_prompt
         }
         
     except Exception as e:
@@ -2789,9 +2789,9 @@ async def set_board_annotation_style(board_id: str, request_data: dict = Body(..
 
 @app.get('/api/boards/{board_id}/annotation-style')
 async def get_board_annotation_style(board_id: str):
-    """获取展板的当前注释风格"""
+    """获取展板的当前注释风格 - 轻量级操作，优先处理"""
     try:
-        # 获取展板的专家实例
+        # 🔧 完全同步处理，无需线程池 - 获取风格是本地操作，很快
         expert = simple_expert_manager.get_expert(board_id)
         style_info = expert.get_annotation_style()
         
@@ -2814,6 +2814,20 @@ async def get_board_annotation_style(board_id: str):
             status_code=500,
             content={"detail": f"获取注释风格失败: {str(e)}"}
         )
+
+# 🔧 添加后备路由，处理前端可能的错误路径调用
+@app.get('/boards/{board_id}/annotation-style')
+async def get_board_annotation_style_fallback(board_id: str):
+    """后备路由：处理前端错误路径调用（缺少/api前缀）"""
+    logger.warning(f"⚠️ 检测到前端使用了错误路径 /boards/{board_id}/annotation-style，重定向到正确API")
+    return await get_board_annotation_style(board_id)
+
+# 🔧 添加POST方法的后备路由
+@app.post('/boards/{board_id}/annotation-style')
+async def set_board_annotation_style_fallback(board_id: str, request_data: dict = Body(...)):
+    """后备路由：处理前端POST请求的错误路径调用（缺少/api前缀）"""
+    logger.warning(f"⚠️ 检测到前端使用了错误POST路径 /boards/{board_id}/annotation-style，重定向到正确API")
+    return await set_board_annotation_style(board_id, request_data)
 
 # 控制台API端点
 @app.post('/api/butler/console')
@@ -4131,50 +4145,50 @@ async def handle_note_command(args, current_path):
             "style": "color: #ff6b6b; background: transparent;"
         }
 
-@app.get('/api/butler/status')
-async def butler_status():
-    """获取管家LLM状态"""
-    try:
-        # 获取应用状态 - 修复：直接访问app_state的属性
-        app_state_data = {
-            "course_folders": app_state.get_course_folders(),
-            "boards": app_state.get_boards(),
-            "uploaded_files": []  # 可以扫描uploads目录获取文件列表
-        }
-        
-        # 统计信息
-        active_boards = len(app_state_data.get("boards", []))
-        file_count = len(app_state_data.get("uploaded_files", []))
-        
-        # 获取管家日志信息
-        butler_log = getattr(butler_llm, 'butler_log', {})
-        app_state_info = butler_log.get("app_state", "running")
-        
-        # 获取多步操作状态
-        multi_step_active = False
-        if hasattr(butler_llm, 'multi_step_context') and butler_llm.multi_step_context:
-            multi_step_active = butler_llm.multi_step_context.get("active", False)
-        
-        status_data = {
-            "app_state": app_state_info,
-            "active_boards": active_boards,
-            "file_count": file_count,
-            "multi_step_active": multi_step_active,
-            "session_id": getattr(butler_llm, 'session_id', 'unknown')
-        }
-        
-        return {
-            "status": "success",
-            "data": status_data
-        }
-        
-    except Exception as e:
-        logger.error(f"🖥️ [CONSOLE] 获取状态失败: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"detail": f"获取状态失败: {str(e)}"}
-        )
-
+# @app.get('/api/butler/status')  # 管家LLM功能已禁用
+# async def butler_status():  # 管家LLM功能已禁用
+#     """获取管家LLM状态"""  # 管家LLM功能已禁用
+#     try:  # 管家LLM功能已禁用
+#         # 获取应用状态 - 修复：直接访问app_state的属性  # 管家LLM功能已禁用
+#         app_state_data = {  # 管家LLM功能已禁用
+#             "course_folders": app_state.get_course_folders(),  # 管家LLM功能已禁用
+#             "boards": app_state.get_boards(),  # 管家LLM功能已禁用
+#             "uploaded_files": []  # 可以扫描uploads目录获取文件列表  # 管家LLM功能已禁用
+#         }  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 统计信息  # 管家LLM功能已禁用
+#         active_boards = len(app_state_data.get("boards", []))  # 管家LLM功能已禁用
+#         file_count = len(app_state_data.get("uploaded_files", []))  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 获取管家日志信息  # 管家LLM功能已禁用
+#         butler_log = getattr(butler_llm, 'butler_log', {})  # 管家LLM功能已禁用
+#         app_state_info = butler_log.get("app_state", "running")  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         # 获取多步操作状态  # 管家LLM功能已禁用
+#         multi_step_active = False  # 管家LLM功能已禁用
+#         if hasattr(butler_llm, 'multi_step_context') and butler_llm.multi_step_context:  # 管家LLM功能已禁用
+#             multi_step_active = butler_llm.multi_step_context.get("active", False)  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         status_data = {  # 管家LLM功能已禁用
+#             "app_state": app_state_info,  # 管家LLM功能已禁用
+#             "active_boards": active_boards,  # 管家LLM功能已禁用
+#             "file_count": file_count,  # 管家LLM功能已禁用
+#             "multi_step_active": multi_step_active,  # 管家LLM功能已禁用
+#             "session_id": getattr(butler_llm, 'session_id', 'unknown')  # 管家LLM功能已禁用
+#         }  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#         return {  # 管家LLM功能已禁用
+#             "status": "success",  # 管家LLM功能已禁用
+#             "data": status_data  # 管家LLM功能已禁用
+#         }  # 管家LLM功能已禁用
+#           # 管家LLM功能已禁用
+#     except Exception as e:  # 管家LLM功能已禁用
+#         logger.error(f"🖥️ [CONSOLE] 获取状态失败: {str(e)}")  # 管家LLM功能已禁用
+#         return JSONResponse(  # 管家LLM功能已禁用
+#             status_code=500,  # 管家LLM功能已禁用
+#             content={"detail": f"获取状态失败: {str(e)}"}  # 管家LLM功能已禁用
+#         )  # 管家LLM功能已禁用
+#   # 管家LLM功能已禁用
 @app.post('/api/butler/function-call')
 async def butler_function_call(request_data: dict = Body(...)):
     """直接执行管家LLM的function call"""

@@ -958,129 +958,25 @@ class ExpertLLM:
         return response
     
     def _call_llm(self, prompt):
-        """内部方法：调用LLM API"""
-        if not QWEN_API_KEY:
-            logger.error("未配置QWEN_API_KEY")
-            return "API调用错误：未配置API密钥"
-            
-        # 获取历史对话
-        conversation_history = conversation_manager.get_conversation(self.session_id, self.board_id)
+        """内部方法：调用LLM API - 🔧 优化：使用异步包装避免阻塞"""
+        # 🔧 关键修复：将同步LLM调用包装为异步，避免阻塞其他操作
+        import asyncio
         
-        # 添加当前用户消息
-        conversation_manager.add_message(
-            self.session_id, 
-            self.board_id, 
-            "user", 
-            prompt
-        )
-        
+        # 如果在异步上下文中，直接运行异步版本
         try:
-            # 判断是否为PDF笔记生成任务，使用不同的超时时间
-            is_pdf_note_task = ("PDF文件" in prompt and "生成" in prompt) or "整本笔记生成任务" in prompt or "并发生成PDF笔记" in prompt
-            timeout = PDF_NOTE_TIMEOUT if is_pdf_note_task else API_TIMEOUT
-            
-            logger.info(f"LLM API调用开始 - 任务类型: {'PDF笔记生成' if is_pdf_note_task else '常规任务'}, 超时时间: {timeout}秒")
-            
-            # 准备API请求 - 使用OpenAI兼容模式
-            url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {QWEN_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            
-            # 构建正确格式的消息列表
-            messages = []
-            
-            # 添加系统消息
-            system_msg = next((msg for msg in conversation_history if msg.get("role") == "system"), None)
-            if system_msg:
-                messages.append({"role": "system", "content": system_msg.get("content", "")})
-            
-            # 添加最近的对话历史
-            for msg in conversation_history[-8:]:  # 最多取最近8条历史记录
-                role = msg.get("role")
-                content = msg.get("content")
-                
-                if role and content and role in ["user", "assistant"]:
-                    messages.append({"role": role, "content": content})
-            
-            # 确保最后一条是当前用户消息
-            if not (len(messages) >= 2 and messages[-1]["role"] == "user" and messages[-1]["content"] == prompt):
-                messages.append({"role": "user", "content": prompt})
-            
-            data = {
-                "model": "qwen-max",
-                "messages": messages,
-                "temperature": 0.7
-            }
-            
-            # 记录API调用开始时间
-            start_time = time.time()
-            
-            # 发送请求 - 配置代理设置以避免连接问题
-            proxies = {'http': None, 'https': None}
-            resp = requests.post(url, headers=headers, json=data, timeout=timeout, proxies=proxies)
-            resp.raise_for_status()
-            
-            result = resp.json()
-            response_content = result["choices"][0]["message"]["content"]
-            
-            # 计算API调用耗时
-            end_time = time.time()
-            duration = end_time - start_time
-            
-            logger.info(f"LLM API调用成功 - 耗时: {duration:.1f}秒, 响应长度: {len(response_content)}字符")
-            
-            # 记录LLM交互日志
-            LLMLogger.log_interaction(
-                llm_type="expert",
-                query=prompt,
-                response=response_content,
-                metadata={
-                    "session_id": self.session_id,
-                    "board_id": self.board_id,
-                    "duration": duration,
-                    "token_count": result.get("usage", {}).get("total_tokens", 0),
-                    "timeout_used": timeout,
-                    "is_pdf_note_task": is_pdf_note_task
-                }
-            )
-            
-            # 添加助手回复
-            conversation_manager.add_message(
-                self.session_id, 
-                self.board_id, 
-                "assistant", 
-                response_content
-            )
-            
-            return response_content
-            
+            loop = asyncio.get_running_loop()
+            # 在当前事件循环中运行
+            task = asyncio.create_task(self._async_call_llm(prompt, self.session_id))
+            # 使用run_until_complete可能会导致嵌套循环问题，所以使用gather
+            future = asyncio.gather(task, return_exceptions=True)
+            result = loop.run_until_complete(future)
+            return result[0] if isinstance(result, list) and len(result) > 0 else "API调用错误"
+        except RuntimeError:
+            # 如果没有运行中的事件循环，创建新的
+            return asyncio.run(self._async_call_llm(prompt, self.session_id))
         except Exception as e:
-            logger.error(f"专家LLM API调用失败 (展板:{self.board_id}): {str(e)}")
-            error_msg = f"API调用错误: {str(e)}"
-            
-            # 记录错误回复
-            conversation_manager.add_message(
-                self.session_id, 
-                self.board_id, 
-                "assistant", 
-                error_msg
-            )
-            
-            # 记录LLM交互错误日志
-            LLMLogger.log_interaction(
-                llm_type="expert",
-                query=prompt,
-                response=error_msg,
-                metadata={
-                    "session_id": self.session_id,
-                    "board_id": self.board_id,
-                    "error": str(e)
-                }
-            )
-            
-            return error_msg
+            logger.error(f"LLM异步包装调用失败: {str(e)}")
+            return f"API调用错误: {str(e)}"
     
     def _prepare_messages(self, prompt):
         """

@@ -21,6 +21,7 @@ import KeyboardShortcuts from "./components/KeyboardShortcuts";
 import Console from "./components/Console"; // 控制台
 import TaskList from "./components/TaskList"; // 导入任务列表组件
 import TextBoxWindow from "./components/TextBoxWindow"; // 导入文本框窗口组件
+import ConcurrentTaskIndicator from "./components/ConcurrentTaskIndicator"; // 导入并发任务指示器
 import api from './api'; // 导入API客户端
 
 const { Header, Sider, Content } = Layout;
@@ -1163,8 +1164,8 @@ function App() {
     
   };
 
-  // 为指定页面生成注释
-  const handleGenerateAnnotation = async (pdfId, userImproveRequest = null) => {
+    // 为指定页面生成注释 - 修复为非阻塞模式
+  const handleGenerateAnnotation = (pdfId, userImproveRequest = null) => {
     if (!currentFile) return;
     
     const pdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
@@ -1205,35 +1206,37 @@ function App() {
       
       return prev;
     });
+
+    // 确保注释窗口可见
+    if (!pdf.windows.annotation.visible) {
+      handleWindowChange(pdfId, 'annotation', { visible: true });
+    }
     
-    try {
-      // 确保注释窗口可见
-      if (!pdf.windows.annotation.visible) {
-        handleWindowChange(pdfId, 'annotation', { visible: true });
-      }
-      
-      // 获取当前页面已有的注释（如果有）
-      const currentAnnotation = pdf.pageAnnotations && pdf.pageAnnotations[pageNum] ? pdf.pageAnnotations[pageNum] : null;
-      
-      // 获取或创建会话ID
-      const sessionId = pdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-      if (!pdf.sessionId) {
-        updatePdfProperty(pdfId, 'sessionId', sessionId);
-      }
-      
-      if (!boardId) {
-        throw new Error('无法确定展板ID');
-      }
-      
-      // 调用API客户端生成注释
-      const result = await api.generateAnnotation(
-        filename, 
-        pageNum, 
-        sessionId, 
-        currentAnnotation, 
-        userImproveRequest,
-        boardId
-      );
+    // 获取当前页面已有的注释（如果有）
+    const currentAnnotation = pdf.pageAnnotations && pdf.pageAnnotations[pageNum] ? pdf.pageAnnotations[pageNum] : null;
+    
+    // 获取或创建会话ID
+    const sessionId = pdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    if (!pdf.sessionId) {
+      updatePdfProperty(pdfId, 'sessionId', sessionId);
+    }
+    
+    if (!boardId) {
+      console.error('无法确定展板ID');
+      message.error('无法确定展板ID');
+      return;
+    }
+    
+    // 🔥 关键修复：使用Promise.then()而不是await，避免阻塞UI
+    console.log('🚀 提交注释生成任务，UI保持响应');
+    api.generateAnnotation(
+      filename, 
+      pageNum, 
+      sessionId, 
+      currentAnnotation, 
+      userImproveRequest,
+      boardId
+    ).then(result => {
       
       console.log('🔍 注释生成API响应:', {
         resultKeys: Object.keys(result || {}),
@@ -1337,7 +1340,7 @@ function App() {
               ...filePdfs[pdfIndex],
               pageAnnotationLoadings: {
                 ...filePdfs[pdfIndex].pageAnnotationLoadings,
-                [pageNum]: false  // 清除当前页面的加载状态
+                [pageNum]: false
               }
             };
             
@@ -1350,7 +1353,7 @@ function App() {
           return prev;
         });
       }
-    } catch (error) {
+    }).catch(error => {
       console.error('❌ 生成注释失败:', error);
       message.error(`生成注释失败: ${error.message}`);
       
@@ -1364,7 +1367,7 @@ function App() {
             ...filePdfs[pdfIndex],
             pageAnnotationLoadings: {
               ...filePdfs[pdfIndex].pageAnnotationLoadings,
-              [pageNum]: false  // 清除当前页面的加载状态
+              [pageNum]: false
             }
           };
           
@@ -1376,7 +1379,7 @@ function App() {
         
         return prev;
       });
-    }
+    });
   };
 
   // 使用图像识别重新生成注释
@@ -1541,15 +1544,58 @@ function App() {
         const maxAttempts = 60; // 最多等待5分钟
         let attempts = 0;
         
+        console.log(`🔄 开始轮询视觉任务结果: ${taskId}`);
+        
         while (attempts < maxAttempts) {
-          const resultResponse = await fetch(`${baseUrl}/api/expert/dynamic/result/${taskId}`);
-          if (resultResponse.ok) {
-            const result = await resultResponse.json();
-            if (result.status === 'completed') {
-              return result;  // 返回完整的result对象，而不只是result.result
-            } else if (result.status === 'failed') {
-              throw new Error(result.error || '任务执行失败');
+          try {
+            console.log(`📊 轮询尝试 ${attempts + 1}/${maxAttempts}`);
+            const resultResponse = await fetch(`${baseUrl}/api/expert/dynamic/result/${taskId}`);
+            
+            if (resultResponse.ok) {
+              let result;
+              try {
+                result = await resultResponse.json();
+              } catch (parseError) {
+                console.error(`❌ JSON解析失败:`, parseError);
+                console.log(`原始响应:`, await resultResponse.text());
+                throw new Error('响应格式错误');
+              }
+              
+              console.log(`📋 轮询响应:`, result);
+              
+              // 严格的null和undefined检查
+              if (result !== null && result !== undefined && typeof result === 'object') {
+                const status = result.status;
+                
+                if (status === 'completed') {
+                  console.log('✅ 视觉任务已完成');
+                  return result;
+                } else if (status === 'failed') {
+                  const errorMsg = result.error || '任务执行失败';
+                  console.error(`❌ 任务失败: ${errorMsg}`);
+                  throw new Error(errorMsg);
+                } else if (status === 'pending' || status === 'processing') {
+                  console.log(`⏳ 任务处理中: ${status}`);
+                } else {
+                  console.log(`🔄 未知任务状态: ${status || 'undefined'}`);
+                }
+              } else {
+                console.warn('⚠️ 收到无效响应:', {
+                  isNull: result === null,
+                  isUndefined: result === undefined,
+                  type: typeof result,
+                  value: result
+                });
+              }
+            } else {
+              console.warn(`⚠️ HTTP错误: ${resultResponse.status} ${resultResponse.statusText}`);
+              
+              if (resultResponse.status === 404) {
+                console.log('🔍 任务不存在，可能尚未创建');
+              }
             }
+          } catch (fetchError) {
+            console.error(`❌ 网络请求失败 (尝试 ${attempts + 1}):`, fetchError.message);
           }
           
           // 等待5秒后重试
@@ -1557,12 +1603,19 @@ function App() {
           attempts++;
         }
         
-        throw new Error('任务超时');
+        console.error(`⏰ 轮询超时: 已尝试 ${maxAttempts} 次`);
+        throw new Error(`任务轮询超时: 超过 ${maxAttempts} 次尝试`);
       };
       
       const data = await pollTaskResult(taskData.task_id);
       
-      // 修复数据提取逻辑 - API返回的结构是 {status: 'completed', result: '内容'}
+      // 修复数据提取逻辑 - 增强null检查
+      console.log('📋 收到任务结果:', data);
+      
+      if (!data || typeof data !== 'object') {
+        throw new Error('无效的任务结果: 数据为空或格式不正确');
+      }
+      
       const annotationContent = data.result || data.note || data.annotation || "无注释内容";
       const annotationSource = data.source || "vision"; // 获取注释来源，视觉模型默认为vision
       
@@ -1643,6 +1696,11 @@ function App() {
       }
     } catch (err) {
       console.error("❌ 图像识别注释失败:", err);
+      console.error("错误详情:", {
+        name: err.name,
+        message: err.message,
+        stack: err.stack?.split('\n').slice(0, 3).join('\n')
+      });
       message.error("图像识别注释失败");
       
       // 清理页面级加载状态 - 失败时也要清理
@@ -3968,12 +4026,177 @@ function App() {
 
   // 改进注释功能
   const handleImproveAnnotation = async (pdfId, pageNum, currentAnnotation, improvePrompt) => {
+    if (!currentFile) return;
+    
+    const pdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
+    if (!pdf) return;
+    
+    const filename = pdf.serverFilename || pdf.filename;
+    
+    // 确保使用统一的boardId
+    let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+    if (!currentExpertBoardId && currentFile) {
+      setCurrentExpertBoardId(currentFile.key);
+      boardId = currentFile.key;
+    }
+    
+    console.log(`🔄 开始改进 ${filename} 第${pageNum}页的注释...`);
+    
+    // 设置加载状态
+    setCourseFiles(prev => {
+      const filePdfs = [...(prev[currentFile.key] || [])];
+      const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+      
+      if (pdfIndex !== -1) {
+        filePdfs[pdfIndex] = {
+          ...filePdfs[pdfIndex],
+          pageAnnotationLoadings: {
+            ...filePdfs[pdfIndex].pageAnnotationLoadings,
+            [pageNum]: true
+          }
+        };
+        
+        return {
+          ...prev,
+          [currentFile.key]: filePdfs
+        };
+      }
+      
+      return prev;
+    });
+    
     try {
-      // 调用生成注释API，传入改进提示
-      await handleGenerateAnnotation(pdfId, improvePrompt);
+      // 获取会话ID
+      const sessionId = pdf.sessionId || `session-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+      
+      // 调用API客户端改进注释（使用并发API）
+      const result = await api.improveAnnotation(
+        filename,
+        pageNum,
+        currentAnnotation,
+        improvePrompt,
+        sessionId,
+        boardId
+      );
+      
+      console.log('🔍 注释改进API响应:', result);
+      
+      // 提取改进后的注释内容
+      const improvedAnnotation = result?.annotation || result?.note || result || '';
+      
+      if (improvedAnnotation && improvedAnnotation.trim()) {
+        // 更新PDF状态
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              pageAnnotations: {
+                ...filePdfs[pdfIndex].pageAnnotations,
+                [pageNum]: improvedAnnotation
+              },
+              annotation: improvedAnnotation, // 更新当前显示的注释
+              pageAnnotationLoadings: {
+                ...filePdfs[pdfIndex].pageAnnotationLoadings,
+                [pageNum]: false
+              }
+            };
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+        
+        // 记录LLM交互日志
+        const logEvent = new CustomEvent('llm-interaction', {
+          detail: {
+            id: `improve-annotation-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            llmType: 'expert',
+            query: `改进注释: ${filename} 第${pageNum}页 - ${improvePrompt}`,
+            response: improvedAnnotation,
+            requestBody: {
+              filename: filename,
+              pageNumber: pageNum,
+              currentAnnotation: currentAnnotation,
+              improveRequest: improvePrompt,
+              sessionId: sessionId,
+              boardId: boardId
+            },
+            metadata: {
+              operation: 'improve_annotation',
+              requestType: 'improve_annotation',
+              filename: filename,
+              pageNumber: pageNum,
+              boardId: boardId,
+              streaming: false,
+              taskBased: true,
+              contentLength: improvedAnnotation.length
+            }
+          }
+        });
+        window.dispatchEvent(logEvent);
+        
+        message.success('注释改进成功!');
+      } else {
+        console.error('❌ 注释改进响应中没有找到有效内容:', result);
+        message.error('未能生成有效的改进注释，请重试');
+        
+        // 清除加载状态
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              pageAnnotationLoadings: {
+                ...filePdfs[pdfIndex].pageAnnotationLoadings,
+                [pageNum]: false
+              }
+            };
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+      }
     } catch (error) {
-      console.error('改进注释失败:', error);
-      message.error('改进注释失败');
+      console.error('❌ 改进注释异常:', error);
+      message.error(`改进注释失败: ${error.message}`);
+      
+      // 清除加载状态
+      setCourseFiles(prev => {
+        const filePdfs = [...(prev[currentFile.key] || [])];
+        const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+        
+        if (pdfIndex !== -1) {
+          filePdfs[pdfIndex] = {
+            ...filePdfs[pdfIndex],
+            pageAnnotationLoadings: {
+              ...filePdfs[pdfIndex].pageAnnotationLoadings,
+              [pageNum]: false
+            }
+          };
+          
+          return {
+            ...prev,
+            [currentFile.key]: filePdfs
+          };
+        }
+        
+        return prev;
+      });
     }
   };
 
@@ -4501,8 +4724,8 @@ function App() {
       {/* 调试面板 */}
       {/* {renderDebugPanel()} */}
       
-      {/* 任务列表组件 */}
-      {currentFile && (
+      {/* 任务列表组件 - 已隐藏 */}
+      {false && currentFile && (
         <TaskList 
           boardId={currentFile.key} 
           apiClient={api}
@@ -4522,6 +4745,14 @@ function App() {
       
       {/* 全局右键菜单组件 */}
       <GlobalContextMenu onCommand={handleContextMenuCommand} />
+      
+      {/* 并发任务状态指示器 - 已隐藏 */}
+      {false && currentFile && (
+        <ConcurrentTaskIndicator 
+          boardId={currentFile.key}
+          visible={true}
+        />
+      )}
     </Layout>
   );
 }

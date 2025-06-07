@@ -8,7 +8,7 @@ import datetime
 from config import QWEN_API_KEY, API_TIMEOUT
 from board_logger import board_logger
 from conversation_manager import conversation_manager
-import expert_llm
+# import expert_llm  # 暂时注释掉避免循环导入
 import llm_agents  # 导入LLM交互模块
 from typing import Dict, List, Any, Optional, Union
 from llm_logger import LLMLogger  # 导入LLM日志记录器

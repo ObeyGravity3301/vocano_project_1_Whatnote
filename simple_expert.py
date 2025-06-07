@@ -59,6 +59,10 @@ class SimpleExpert:
         self.board_id = board_id
         self.session_id = f"simple_expert_{board_id}_{secrets.token_hex(4)}"
         
+        # 🔧 设置默认注释风格为keywords（生成速度更快）
+        self.annotation_style = 'keywords'
+        self.custom_annotation_prompt = ''
+        
         # 任务管理
         self.tasks: Dict[str, Task] = {}
         self.task_queue = asyncio.Queue()
@@ -76,7 +80,7 @@ class SimpleExpert:
         # 对话历史管理
         self.conversation_history = []
         
-        logger.info(f"SimpleExpert 初始化完成，展板ID: {board_id}, 最大并发任务数: {self.max_concurrent_tasks}")
+        logger.info(f"SimpleExpert 初始化完成，展板ID: {board_id}, 默认注释风格: {self.annotation_style}, 最大并发任务数: {self.max_concurrent_tasks}")
         
         # 预创建HTTP客户端
         self.http_client = httpx.AsyncClient(timeout=60.0)
@@ -340,9 +344,9 @@ class SimpleExpert:
                 if annotation_style == 'custom' and custom_prompt:
                     logger.info(f"使用传入的自定义提示: {custom_prompt[:100]}...")
             else:
-                # 回退到实例设置
-                annotation_style = getattr(self, 'annotation_style', 'detailed')
-                custom_prompt = getattr(self, 'custom_annotation_prompt', '')
+                # 回退到实例设置 - 🔧 修复：直接使用属性，不使用getattr默认值
+                annotation_style = self.annotation_style
+                custom_prompt = self.custom_annotation_prompt
                 logger.info(f"使用实例设置的注释风格: {annotation_style}")
             
             # 首先尝试获取PDF文字内容
@@ -648,10 +652,10 @@ PDF文件：{filename}
             logger.info(f"自定义提示词: {custom_prompt[:100]}...")
     
     def get_annotation_style(self) -> Dict[str, str]:
-        """获取当前注释风格"""
+        """获取当前注释风格 - 🔧 优化：保持用户设置，不自动重置为detailed"""
         return {
-            "style": getattr(self, 'annotation_style', 'detailed'),
-            "custom_prompt": getattr(self, 'custom_annotation_prompt', '')
+            "style": self.annotation_style,
+            "custom_prompt": self.custom_annotation_prompt
         }
     
     async def _improve_annotation_task(self, params: Dict[str, Any]) -> str:

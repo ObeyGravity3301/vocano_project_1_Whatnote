@@ -24,37 +24,16 @@ class BoardManager:
     
     def update_board_context(self, board_id, context_data):
         """
-        更新展板上下文信息
-        
-        Args:
-            board_id: 展板ID
-            context_data: 上下文数据，包含windows、stats、summary等
+        更新展板上下文信息 - 简化版
         """
         try:
             # 保存到内存
             self.board_contexts[board_id] = context_data
-            
-            # 更新展板状态
-            self._update_board_state(board_id, context_data)
-            
-            # 记录到展板日志
-            board_logger.add_operation(
-                board_id, 
-                "context_updated", 
-                {
-                    "windows_count": len(context_data.get('windows', [])),
-                    "pdf_count": context_data.get('stats', {}).get('pdfWindows', 0),
-                    "note_count": context_data.get('stats', {}).get('noteWindows', 0)
-                }
-            )
-            
-            logger.info(f"展板 {board_id} 上下文已更新，包含 {len(context_data.get('windows', []))} 个窗口")
+            logger.info(f"展板 {board_id} 上下文已更新（简化模式）")
             return True
-            
         except Exception as e:
             logger.error(f"更新展板上下文失败: {e}")
             return False
-    
     def get_board_context(self, board_id):
         """
         获取展板上下文信息

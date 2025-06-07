@@ -1,0 +1,80 @@
+.concurrent-task-indicator {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 1000;
+  transition: all 0.3s ease;
+}
+
+.concurrent-task-indicator .ant-btn {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+}
+
+.concurrent-task-indicator .ant-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.concurrent-task-indicator .ant-btn.has-active-tasks {
+  animation: pulse 2s infinite;
+  background: linear-gradient(45deg, #1890ff, #52c41a);
+  border: none;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(24, 144, 255, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(24, 144, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(24, 144, 255, 0);
+  }
+}
+
+.concurrent-task-indicator .ant-badge-count {
+  animation: bounce 1s infinite;
+}
+
+@keyframes bounce {
+  0%, 20%, 50%, 80%, 100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-3px);
+  }
+  60% {
+    transform: translateY(-1px);
+  }
+}
+
+/* 抽屉内容样式优化 */
+.ant-drawer-body .ant-list-item {
+  border-bottom: 1px solid #f0f0f0;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  background: #fafafa;
+  padding: 12px !important;
+}
+
+.ant-drawer-body .ant-list-item:last-child {
+  margin-bottom: 0;
+}
+
+.ant-drawer-body .ant-progress-bg {
+  transition: all 0.3s ease;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .concurrent-task-indicator {
+    bottom: 16px;
+    right: 16px;
+  }
+  
+  .ant-drawer {
+    width: 90% !important;
+  }
+} 

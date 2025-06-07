@@ -1,113 +1,58 @@
 @echo off
-title WhatNote Main Launcher
-
-echo.
-echo ==========================================
-echo    WhatNote Smart Learning Assistant
-echo    Separated Launch System
-echo ==========================================
+echo =================================
+echo      启动 WhatNote 应用
+echo =================================
 echo.
 
-echo Current directory: %CD%
-echo.
-
-REM Basic checks
-if not exist "main.py" (
-    echo ERROR: main.py not found in current directory
-    echo Please run this script from the WhatNote project root directory
-    echo.
+:: 检查Python是否可用
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo ❌ 错误: 未找到Python，请确保Python已安装并添加到PATH
     pause
     exit /b 1
 )
 
-if not exist "frontend" (
-    echo ERROR: frontend directory not found
-    echo Please run this script from the WhatNote project root directory
-    echo.
+:: 检查Node.js是否可用  
+node --version >nul 2>&1
+if errorlevel 1 (
+    echo ❌ 错误: 未找到Node.js，请确保Node.js已安装并添加到PATH
     pause
     exit /b 1
 )
 
-if not exist "start_backend.bat" (
-    echo ERROR: start_backend.bat not found
-    echo Please make sure all launcher scripts are present
-    echo.
-    pause
-    exit /b 1
-)
-
-if not exist "start_frontend.bat" (
-    echo ERROR: start_frontend.bat not found
-    echo Please make sure all launcher scripts are present
-    echo.
-    pause
-    exit /b 1
-)
-
-echo [OK] All required files found
+echo ✅ Python和Node.js环境检查通过
 echo.
 
-echo ==========================================
-echo    Launch Options
-echo ==========================================
-echo.
-echo 1. Start both backend and frontend (recommended)
-echo 2. Start backend only
-echo 3. Start frontend only
-echo 4. Exit
-echo.
-set /p choice="Please choose an option (1-4): "
+:: 启动后端服务
+echo 🚀 启动后端服务（端口8000）...
+start "WhatNote Backend" python main.py
 
-if "%choice%"=="1" goto start_both
-if "%choice%"=="2" goto start_backend
-if "%choice%"=="3" goto start_frontend
-if "%choice%"=="4" goto exit
-echo Invalid choice, defaulting to option 1...
+:: 等待后端启动
+echo ⏳ 等待后端服务启动...
+timeout /t 5 /nobreak >nul
 
-:start_both
-echo.
-echo Starting both backend and frontend...
-echo.
-echo Starting backend server in new window...
-start "WhatNote Backend" "start_backend.bat"
-echo Waiting 3 seconds for backend to initialize...
-timeout /t 3 /nobreak >nul
-echo.
-echo Starting frontend server in new window...
-start "WhatNote Frontend" "start_frontend.bat"
-echo.
-echo ==========================================
-echo    Services Starting
-echo ==========================================
-echo.
-echo Backend server: http://127.0.0.1:8000
-echo Frontend app:   http://localhost:3000
-echo API docs:       http://127.0.0.1:8000/docs
-echo.
-echo Two new windows should have opened
-echo Wait for both services to fully start (may take 1-2 minutes)
-echo The browser should open automatically when frontend is ready
-echo.
-goto end
+:: 启动前端服务
+echo 🌐 启动前端服务（端口3000）...
+cd frontend
+start "WhatNote Frontend" npm start
+cd ..
 
-:start_backend
 echo.
-echo Starting backend only...
-start "WhatNote Backend" "start_backend.bat"
-echo Backend server is starting in a new window
-goto end
-
-:start_frontend
+echo ✅ WhatNote 已启动！
 echo.
-echo Starting frontend only...
-start "WhatNote Frontend" "start_frontend.bat"
-echo Frontend server is starting in a new window
-goto end
+echo 📌 访问地址:
+echo   前端: http://localhost:3000
+echo   后端: http://localhost:8000
+echo.
+echo 💡 提示:
+echo   - 前端窗口将自动打开浏览器
+echo   - 后端在控制台窗口中运行
+echo   - 关闭控制台窗口将停止服务
+echo.
+echo 🔧 如果遇到问题:
+echo   - 确保端口3000和8000未被占用
+echo   - 检查防火墙设置
+echo   - 运行: python test_basic_functionality.py 进行测试
+echo.
 
-:end
-echo Press any key to exit this launcher...
-pause
-goto exit
-
-:exit
-exit 
+pause 

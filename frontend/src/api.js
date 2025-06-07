@@ -389,39 +389,16 @@ const api = {
     });
   },
   
-  // 生成注释 - 使用并发API，包含风格确认
-  generateAnnotation: async (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
-    console.log(`🚀 使用并发API生成注释: ${filename} 第${pageNumber}页`);
+  // 生成注释 - 使用并发API
+  generateAnnotation: (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
+    console.log(`🚀 使用并发API生成页面注释: ${filename} 第${pageNumber}页`);
     
     if (!boardId) {
       console.error('❌ 并发API需要boardId');
-      throw new Error('并发API需要boardId');
+      return Promise.reject(new Error('并发API需要boardId'));
     }
 
-    // 🔧 修复：生成注释前先确认当前风格
-    let currentStyle = 'detailed'; // 默认风格
-    let customPrompt = '';
-    
-    try {
-      console.log(`🎨 获取展板 ${boardId} 的当前注释风格...`);
-      const styleResponse = await fetch(`${API_BASE_URL}/api/boards/${boardId}/annotation-style`);
-      
-      if (styleResponse.ok) {
-        const styleData = await styleResponse.json();
-        currentStyle = styleData.annotation_style || 'detailed';
-        customPrompt = styleData.custom_prompt || '';
-        console.log(`✅ 当前注释风格: ${currentStyle}`);
-        if (currentStyle === 'custom') {
-          console.log(`📝 自定义提示: ${customPrompt.substring(0, 100)}...`);
-        }
-      } else {
-        console.warn(`⚠️ 获取风格失败，使用默认风格: ${currentStyle}`);
-      }
-    } catch (error) {
-      console.warn(`⚠️ 风格确认失败，使用默认风格: ${error.message}`);
-    }
-
-    // 构建任务信息 - 包含确认的风格信息
+    // 构建任务信息
     const task_info = {
       type: 'generate_annotation',
       params: {
@@ -429,10 +406,7 @@ const api = {
         pageNumber: pageNumber,
         sessionId: sessionId,
         currentAnnotation: currentAnnotation,
-        improveRequest: improveRequest,
-        // 🔧 新增：显式传递当前风格信息
-        annotationStyle: currentStyle,
-        customPrompt: customPrompt
+        improveRequest: improveRequest
       }
     };
 
@@ -441,13 +415,7 @@ const api = {
       task_info: task_info
     };
 
-    console.log('📝 提交并发注释任务（包含风格信息）:', {
-      boardId: boardId,
-      filename: filename,
-      pageNumber: pageNumber,
-      annotationStyle: currentStyle,
-      customPromptLength: customPrompt.length
-    });
+    console.log('🚀 提交注释生成任务:', body);
 
     // 使用并发API提交任务
     return fetch(`${API_BASE_URL}/api/expert/dynamic/submit`, {
@@ -457,179 +425,141 @@ const api = {
     }).then(response => {
       if (!response.ok) {
         return response.text().then(text => {
-          console.error(`❌ 并发任务提交失败: ${response.status} ${response.statusText}`, text);
-          throw new Error(`并发任务提交失败: ${response.status} ${response.statusText} - ${text}`);
+          console.error(`❌ 并发注释任务提交失败: ${response.status} ${response.statusText}`, text);
+          throw new Error(`并发注释任务提交失败: ${response.status} ${response.statusText} - ${text}`);
         });
       }
       return response.json();
     }).then(data => {
-      console.log('✅ 并发任务已提交:', data);
+      console.log('✅ 并发注释任务已提交:', data);
       
-      // 返回任务ID，前端可以用它来轮询结果
       const taskId = data.task_id;
       
       // 轮询任务结果
       return new Promise((resolve, reject) => {
-        const pollInterval = 1000; // 1秒轮询一次
-        const maxPolls = 60; // 最多轮询60次（60秒）
+        const pollInterval = 1500; // 1.5秒轮询一次（注释生成较快）
+        const maxPolls = 40; // 最多轮询40次（1分钟）
         let pollCount = 0;
-        
-        const poll = () => {
-          pollCount++;
-          console.log(`🔄 轮询任务结果 (${pollCount}/${maxPolls}): ${taskId}`);
-          
-          // 获取任务结果
-          fetch(`${API_BASE_URL}/api/expert/dynamic/result/${taskId}`)
-            .then(response => response.json())
-            .then(resultData => {
-              if (resultData.status === 'completed') {
-                console.log('✅ 任务完成:', resultData);
-                // 格式化结果以兼容原有接口
-                resolve({
-                  annotation: resultData.result,
-                  session_id: sessionId
-                });
-              } else if (resultData.status === 'failed') {
-                console.error('❌ 任务失败:', resultData);
-                reject(new Error(`任务执行失败: ${resultData.error || '未知错误'}`));
-              } else {
-                // 任务还在进行中
-                if (pollCount < maxPolls) {
-                  setTimeout(poll, pollInterval);
-                } else {
-                  reject(new Error('任务超时'));
-                }
+
+        const pollResult = () => {
+          return fetch(`${API_BASE_URL}/api/expert/dynamic/result/${taskId}`)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error(`轮询失败: ${response.status} ${response.statusText}`);
               }
+              return response.json();
             })
-            .catch(error => {
-              console.error('❌ 轮询错误:', error);
-              if (pollCount < maxPolls) {
-                setTimeout(poll, pollInterval);
+            .then(pollResponse => {
+              console.log(`📊 注释轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+              
+              if (pollResponse.status === 'completed') {
+                console.log('✅ 注释生成完成');
+                return { annotation: pollResponse.result };
+              } else if (pollResponse.status === 'failed') {
+                throw new Error(pollResponse.error || '注释生成失败');
               } else {
-                reject(error);
+                // 仍在处理中
+                pollCount++;
+                if (pollCount >= maxPolls) {
+                  throw new Error('注释生成超时');
+                }
+                
+                console.log('⏳ 继续等待注释生成...');
+                return new Promise(resolve => 
+                  setTimeout(() => resolve(pollResult()), pollInterval)
+                );
               }
             });
         };
-        
-        // 开始轮询
-        setTimeout(poll, pollInterval);
+
+        pollResult().then(resolve).catch(reject);
       });
-    }).catch(error => {
-      console.error('❌ 并发API请求错误:', error);
-      throw error;
     });
   },
   
-  // 使用视觉模型生成注释 - 包含风格确认
-  generateVisionAnnotation: async (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
-    console.log(`🚀 使用视觉模型生成注释: ${filename} 第${pageNumber}页`);
+  // 视觉识别注释 - 使用并发API
+  generateVisionAnnotation: (filename, pageNumber, sessionId = null, boardId = null) => {
+    console.log(`🚀 使用并发API生成视觉识别注释: ${filename} 第${pageNumber}页`);
     
-    // 🔧 修复：生成注释前先确认当前风格
-    let currentStyle = 'detailed'; // 默认风格
-    let customPrompt = '';
-    
-    if (boardId) {
-      try {
-        console.log(`🎨 获取展板 ${boardId} 的当前注释风格...`);
-        const styleResponse = await fetch(`${API_BASE_URL}/api/boards/${boardId}/annotation-style`);
-        
-        if (styleResponse.ok) {
-          const styleData = await styleResponse.json();
-          currentStyle = styleData.annotation_style || 'detailed';
-          customPrompt = styleData.custom_prompt || '';
-          console.log(`✅ 视觉注释使用风格: ${currentStyle}`);
-          if (currentStyle === 'custom') {
-            console.log(`📝 自定义提示: ${customPrompt.substring(0, 100)}...`);
-          }
-        } else {
-          console.warn(`⚠️ 获取风格失败，使用默认风格: ${currentStyle}`);
-        }
-      } catch (error) {
-        console.warn(`⚠️ 风格确认失败，使用默认风格: ${error.message}`);
+    if (!boardId) {
+      console.error('❌ 并发API需要boardId');
+      return Promise.reject(new Error('并发API需要boardId'));
+    }
+
+    // 构建任务信息
+    const task_info = {
+      type: 'vision_annotation',
+      params: {
+        filename: filename,
+        pageNumber: pageNumber,
+        sessionId: sessionId
       }
-    }
-    
-    const query = new URLSearchParams();
-    if (sessionId) query.append('session_id', sessionId);
-    
-    // 构建API路径
-    const endpoint = `/api/materials/${filename}/pages/${pageNumber}/vision-annotate?${query.toString()}`;
-    console.log(`视觉识别注释请求路径: ${endpoint}`);
-    
-    // 构建请求体
-    const body = {};
-    
-    // 判断是初次视觉识别还是改进已有注释
-    const isImproveRequest = currentAnnotation !== null && currentAnnotation.length > 0;
-    
-    // 根据不同场景添加请求数据
-    if (isImproveRequest) {
-      // 改进模式 - 传递当前注释和改进请求
-      body.current_annotation = currentAnnotation;
-      if (improveRequest !== null) {
-        body.improve_request = improveRequest;
-        console.log(`视觉识别改进模式: 当前注释长度=${currentAnnotation.length}, 改进请求=${improveRequest || '无'}`);
-      } else {
-        console.log(`视觉识别改进模式: 当前注释长度=${currentAnnotation.length}, 改进请求=无`);
-      }
-    } else {
-      // 初次识别模式 - 不传递当前注释
-      console.log(`初次视觉识别模式: 不传递当前注释`);
-      // 如果有改进请求但没有当前注释，仍然传递改进请求作为初始指导
-      if (improveRequest !== null) {
-        body.improve_request = improveRequest;
-        console.log(`初次视觉识别的指导提示: ${improveRequest}`);
-      }
-    }
-    
-    // 🔧 新增：传递风格信息到视觉注释API
-    if (currentStyle !== 'detailed') {
-      body.annotation_style = currentStyle;
-      console.log(`📝 传递注释风格到视觉API: ${currentStyle}`);
-    }
-    if (currentStyle === 'custom' && customPrompt) {
-      body.custom_prompt = customPrompt;
-      console.log(`📝 传递自定义提示到视觉API: ${customPrompt.substring(0, 100)}...`);
-    }
-    
-    // 添加展板ID
-    if (boardId) {
-      body.board_id = boardId;
-      console.log(`使用展板ID: ${boardId}`);
-    }
-    
-    // 日志完整请求体，便于调试
-    console.log('视觉识别请求体（包含风格信息）:', {
-      isImproveRequest: isImproveRequest,
-      annotationStyle: currentStyle,
-      customPromptLength: customPrompt.length,
-      boardId: boardId,
-      hasImproveRequest: !!improveRequest
-    });
-    
-    // 使用直接fetch调用，不再依赖apiRequest自动添加/api前缀
-    return fetch(`${API_BASE_URL}${endpoint}`, {
+    };
+
+    const body = {
+      board_id: boardId,
+      task_info: task_info
+    };
+
+    console.log('🚀 提交视觉识别注释任务:', body);
+
+    // 使用并发API提交任务
+    return fetch(`${API_BASE_URL}/api/expert/dynamic/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }).then(response => {
       if (!response.ok) {
         return response.text().then(text => {
-          console.error(`API请求失败: ${response.status} ${response.statusText}`, text);
-          throw new Error(`API请求失败: ${response.status} ${response.statusText} - ${text}`);
+          console.error(`❌ 并发视觉注释任务提交失败: ${response.status} ${response.statusText}`, text);
+          throw new Error(`并发视觉注释任务提交失败: ${response.status} ${response.statusText} - ${text}`);
         });
       }
       return response.json();
     }).then(data => {
-      console.log('视觉识别注释响应:', data);
-      // 将response中的note字段映射到annotation字段，确保前端能正确识别
-      if (data && data.note && !data.annotation) {
-        data.annotation = data.note;
-      }
-      return data;
-    }).catch(error => {
-      console.error('API请求错误:', error);
-      throw error;
+      console.log('✅ 并发视觉注释任务已提交:', data);
+      
+      const taskId = data.task_id;
+      
+      // 轮询任务结果
+      return new Promise((resolve, reject) => {
+        const pollInterval = 2000; // 2秒轮询一次（视觉识别较慢）
+        const maxPolls = 60; // 最多轮询60次（2分钟）
+        let pollCount = 0;
+
+        const pollResult = () => {
+          return fetch(`${API_BASE_URL}/api/expert/dynamic/result/${taskId}`)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error(`轮询失败: ${response.status} ${response.statusText}`);
+              }
+              return response.json();
+            })
+            .then(pollResponse => {
+              console.log(`📊 视觉注释轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+              
+              if (pollResponse.status === 'completed') {
+                console.log('✅ 视觉注释生成完成');
+                return { annotation: pollResponse.result };
+              } else if (pollResponse.status === 'failed') {
+                throw new Error(pollResponse.error || '视觉注释生成失败');
+              } else {
+                // 仍在处理中
+                pollCount++;
+                if (pollCount >= maxPolls) {
+                  throw new Error('视觉注释生成超时');
+                }
+                
+                console.log('⏳ 继续等待视觉注释生成...');
+                return new Promise(resolve => 
+                  setTimeout(() => resolve(pollResult()), pollInterval)
+                );
+              }
+            });
+        };
+
+        pollResult().then(resolve).catch(reject);
+      });
     });
   },
   
@@ -752,28 +682,91 @@ const api = {
     });
   },
 
-  // 改进注释 - 新增函数
+  // 改进注释 - 使用并发API
   improveAnnotation: (filename, pageNumber, currentAnnotation, improveRequest, sessionId = null, boardId = null) => {
-    console.log(`API请求: 改进注释, 文件: ${filename}, 页码: ${pageNumber}`);
-    console.log(`改进提示: ${improveRequest || '无'}`);
+    console.log(`🚀 使用并发API改进页面注释: ${filename} 第${pageNumber}页`);
     
-    const query = new URLSearchParams();
-    if (sessionId) query.append('session_id', sessionId);
-    
-    const endpoint = `/materials/${filename}/pages/${pageNumber}/improve-annotation?${query.toString()}`;
-    
-    const body = {
-      current_annotation: currentAnnotation,
-      improve_request: improveRequest,
-      board_id: boardId
+    if (!boardId) {
+      console.error('❌ 并发API需要boardId');
+      return Promise.reject(new Error('并发API需要boardId'));
+    }
+
+    // 构建任务信息
+    const task_info = {
+      type: 'improve_annotation',
+      params: {
+        filename: filename,
+        pageNumber: pageNumber,
+        currentAnnotation: currentAnnotation,
+        improveRequest: improveRequest,
+        sessionId: sessionId
+      }
     };
-    
-    console.log('改进注释请求体:', JSON.stringify(body));
-    
-    return apiRequest(endpoint, {
+
+    const body = {
+      board_id: boardId,
+      task_info: task_info
+    };
+
+    console.log('🚀 提交注释改进任务:', body);
+
+    // 使用并发API提交任务
+    return fetch(`${API_BASE_URL}/api/expert/dynamic/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
+    }).then(response => {
+      if (!response.ok) {
+        return response.text().then(text => {
+          console.error(`❌ 并发注释改进任务提交失败: ${response.status} ${response.statusText}`, text);
+          throw new Error(`并发注释改进任务提交失败: ${response.status} ${response.statusText} - ${text}`);
+        });
+      }
+      return response.json();
+    }).then(data => {
+      console.log('✅ 并发注释改进任务已提交:', data);
+      
+      const taskId = data.task_id;
+      
+      // 轮询任务结果
+      return new Promise((resolve, reject) => {
+        const pollInterval = 1500; // 1.5秒轮询一次
+        const maxPolls = 40; // 最多轮询40次（1分钟）
+        let pollCount = 0;
+
+        const pollResult = () => {
+          return fetch(`${API_BASE_URL}/api/expert/dynamic/result/${taskId}`)
+            .then(response => {
+              if (!response.ok) {
+                throw new Error(`轮询失败: ${response.status} ${response.statusText}`);
+              }
+              return response.json();
+            })
+            .then(pollResponse => {
+              console.log(`📊 注释改进轮询结果 ${pollCount + 1}/${maxPolls}:`, pollResponse);
+              
+              if (pollResponse.status === 'completed') {
+                console.log('✅ 注释改进完成');
+                return { annotation: pollResponse.result };
+              } else if (pollResponse.status === 'failed') {
+                throw new Error(pollResponse.error || '注释改进失败');
+              } else {
+                // 仍在处理中
+                pollCount++;
+                if (pollCount >= maxPolls) {
+                  throw new Error('注释改进超时');
+                }
+                
+                console.log('⏳ 继续等待注释改进...');
+                return new Promise(resolve => 
+                  setTimeout(() => resolve(pollResult()), pollInterval)
+                );
+              }
+            });
+        };
+
+        pollResult().then(resolve).catch(reject);
+      });
     });
   },
 
@@ -828,34 +821,29 @@ const api = {
     }
   },
 
-  // 获取展板并发任务状态
-  async getConcurrentStatus(boardId) {
-    try {
-      console.log(`🔍 获取展板 ${boardId} 的并发状态`);
-      const response = await apiRequest(`/api/expert/dynamic/concurrent-status/${boardId}`);
-      console.log(`📊 并发状态响应:`, response);
-      return response;
-    } catch (error) {
-      console.error('获取并发状态失败:', error);
-      return { active_task_details: [] }; // 返回空的任务列表
-    }
+  // 获取并发任务状态
+  getConcurrentStatus: (boardId) => {
+    return fetch(`${API_BASE_URL}/api/expert/dynamic/concurrent-status/${boardId}`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`获取并发状态失败: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        return data.concurrent_status;
+      });
   },
 
-  // 删除PDF文件
-  async deletePdfFile(filename, boardId = null) {
-    const url = new URL(`${API_BASE_URL}/api/pdf/${encodeURIComponent(filename)}`);
-    if (boardId) {
-      url.searchParams.append('board_id', boardId);
-    }
-    
-    const response = await fetch(url, {
-      method: 'DELETE',
-    });
-    
-    if (!response.ok) {
-      throw new Error(`删除PDF文件失败: ${response.status}`);
-    }
-    return response.json();
+  // 获取任务结果
+  getTaskResult: (taskId) => {
+    return fetch(`${API_BASE_URL}/api/expert/dynamic/result/${taskId}`)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`获取任务结果失败: ${response.status} ${response.statusText}`);
+        }
+        return response.json();
+      });
   },
 
 };
