@@ -32,11 +32,13 @@ const TextBoxWindow = ({
       
       // 通过API更新窗口内容
       const response = await api.put(`/api/boards/${boardId}/windows/${window.id}`, {
-        ...window,
-        content: newContent
+        window: {
+          ...window,
+          content: newContent
+        }
       });
       
-      if (response.status === 200) {
+      if (response && response.status === 200) {
         message.success('内容已保存');
         if (onContentChange) {
           onContentChange(newContent);

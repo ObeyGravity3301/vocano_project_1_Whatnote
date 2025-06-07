@@ -3149,9 +3149,11 @@ async def handle_cd_command(args, current_path):
         course_folders = app_state.get_course_folders()
         boards = app_state.get_boards()
         
-        # 检查是否是课程文件夹 - 支持精确匹配和模糊匹配
+        # 检查是否是课程文件夹 - 支持精确匹配、模糊匹配和部分匹配
+        course_matches = []
         for folder in course_folders:
-            if folder['name'] == target or folder['name'].lower() == target.lower():
+            if folder['name'] == target:
+                # 精确匹配，优先级最高
                 return {
                     "response": f"进入课程: {folder['name']}",
                     "type": "navigation",
@@ -3162,10 +3164,32 @@ async def handle_cd_command(args, current_path):
                         "course_id": folder['id']
                     }
                 }
+            elif folder['name'].lower() == target.lower():
+                # 大小写不敏感匹配
+                course_matches.append(folder)
+            elif target.lower() in folder['name'].lower() or folder['name'].lower() in target.lower():
+                # 部分匹配（用于处理重命名情况）
+                course_matches.append(folder)
         
-        # 检查是否是展板 - 支持精确匹配和模糊匹配
+        # 如果有匹配的课程，选择最佳匹配
+        if course_matches:
+            best_match = course_matches[0]  # 取第一个匹配项
+            return {
+                "response": f"进入课程: {best_match['name']}",
+                "type": "navigation",
+                "style": "color: #74c0fc; background: transparent;",
+                "navigation": {
+                    "action": "enter_course",
+                    "course_name": best_match['name'],
+                    "course_id": best_match['id']
+                }
+            }
+        
+        # 检查是否是展板 - 支持精确匹配、模糊匹配和部分匹配
+        board_matches = []
         for board in boards:
-            if board['name'] == target or board['name'].lower() == target.lower():
+            if board['name'] == target:
+                # 精确匹配，优先级最高
                 return {
                     "response": f"进入展板: {board['name']}",
                     "type": "navigation",
@@ -3176,6 +3200,26 @@ async def handle_cd_command(args, current_path):
                         "board_id": board['id']
                     }
                 }
+            elif board['name'].lower() == target.lower():
+                # 大小写不敏感匹配
+                board_matches.append(board)
+            elif target.lower() in board['name'].lower() or board['name'].lower() in target.lower():
+                # 部分匹配（用于处理重命名情况）
+                board_matches.append(board)
+        
+        # 如果有匹配的展板，选择最佳匹配
+        if board_matches:
+            best_match = board_matches[0]  # 取第一个匹配项
+            return {
+                "response": f"进入展板: {best_match['name']}",
+                "type": "navigation",
+                "style": "color: #74c0fc; background: transparent;",
+                "navigation": {
+                    "action": "enter_board", 
+                    "board_name": best_match['name'],
+                    "board_id": best_match['id']
+                }
+            }
         
         # 提供建议
         suggestions = []
@@ -3759,6 +3803,60 @@ async def handle_board_command(args, current_path):
         course_info = f" (课程: {target_board.get('course_folder', '根目录')})" if target_board.get('course_folder') else ""
         return {
             "response": f"✅ 展板 '{board_name}'{course_info} 已删除", 
+            "type": "success",
+            "style": "color: #51cf66; background: transparent;",
+            "refresh_needed": True
+        }
+    elif action == "rename":
+        if len(args) < 3:
+            return {
+                "response": "用法: board rename <旧名称> <新名称>", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        old_name = args[1]
+        new_name = ' '.join(args[2:])
+        
+        # 去掉外层引号
+        if (old_name.startswith('"') and old_name.endswith('"')) or (old_name.startswith("'") and old_name.endswith("'")):
+            old_name = old_name[1:-1]
+        if (new_name.startswith('"') and new_name.endswith('"')) or (new_name.startswith("'") and new_name.endswith("'")):
+            new_name = new_name[1:-1]
+        
+        # 查找要重命名的展板
+        boards = app_state.get_boards()
+        target_board = None
+        for board in boards:
+            if board['name'] == old_name or board['name'].lower() == old_name.lower():
+                target_board = board
+                break
+        
+        if not target_board:
+            return {
+                "response": f"找不到展板: {old_name}", 
+                "type": "error",
+                "style": "color: #ff6b6b; background: transparent;"
+            }
+        
+        # 检查新名称是否已存在（在同一课程中）
+        course_folder = target_board.get('course_folder', '')
+        for board in boards:
+            if (board['name'] == new_name or board['name'].lower() == new_name.lower()) and board.get('course_folder', '') == course_folder and board['id'] != target_board['id']:
+                scope_msg = f"课程 '{course_folder}' 中" if course_folder else "系统中"
+                return {
+                    "response": f"展板名称 '{new_name}' 在{scope_msg}已存在", 
+                    "type": "error",
+                    "style": "color: #ff6b6b; background: transparent;"
+                }
+        
+        # 更新展板名称
+        target_board['name'] = new_name
+        app_state.save_state()
+        
+        course_info = f" (课程: {course_folder})" if course_folder else ""
+        return {
+            "response": f"✅ 展板已重命名: '{old_name}' → '{new_name}'{course_info}", 
             "type": "success",
             "style": "color: #51cf66; background: transparent;",
             "refresh_needed": True

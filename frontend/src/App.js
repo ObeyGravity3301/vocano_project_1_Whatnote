@@ -207,12 +207,21 @@ function App() {
     // 处理刷新请求
     if (navigationInfo.action === 'refresh_needed') {
       console.log('🔄 控制台请求刷新界面');
+      
       // 刷新课程数据
       refreshCourses();
       
       // 🔧 修复：触发CourseExplorer的全局刷新事件
       const refreshEvent = new CustomEvent('whatnote-refresh-courses');
       window.dispatchEvent(refreshEvent);
+      
+      // 🔧 新增：如果当前有选中的展板，重新加载其自定义窗口
+      if (currentFile && currentFile.key) {
+        console.log(`🪟 [DEBUG] 刷新当前展板的自定义窗口: ${currentFile.key}`);
+        setTimeout(() => {
+          loadCustomWindows(currentFile.key);
+        }, 500);
+      }
       
       message.success('界面已刷新');
       return;
@@ -2440,15 +2449,7 @@ function App() {
         console.log(`📞 [DEBUG] loadCustomWindows 延时调用完成`);
       }, 500);
       
-      // 🔧 新增：强制设置customWindowsVisible
-      setTimeout(() => {
-        console.log(`👁️ [DEBUG] 强制设置 customWindowsVisible[${fileNode.key}] = true`);
-        setCustomWindowsVisible(prev => ({
-          ...prev,
-          [fileNode.key]: true
-        }));
-        console.log(`✅ [DEBUG] customWindowsVisible 设置完成`);
-      }, 600);
+
       
     } else {
       console.warn(`⚠️ [DEBUG] 文件节点没有key，无法加载自定义窗口`);
@@ -4223,10 +4224,14 @@ function App() {
       console.log(`📡 [DEBUG] 开始请求展板数据: /api/boards/${boardId}`);
       const response = await api.get(`/api/boards/${boardId}`);
       
-      console.log(`📋 [DEBUG] API响应状态: ${response.status}`);
+      console.log(`📋 [DEBUG] API响应:`, response);
+      console.log(`🔍 [DEBUG] response详细信息:`);
+      console.log(`  - response类型: ${typeof response}`);
       
-      if (response.status === 200) {
-        const boardData = response.data;
+      // 修复：使用fetch API的正确响应格式
+      // api.get()直接返回JSON数据，而不是axios格式的{status, data}
+      if (response && typeof response === 'object') {
+        const boardData = response;
         const windows = boardData.windows || [];
         
         console.log(`🪟 [DEBUG] 获取到的窗口数据:`, windows);
@@ -4260,11 +4265,30 @@ function App() {
         
         console.log(`✅ [DEBUG] 已加载展板 ${boardId} 的 ${windows.length} 个自定义窗口`);
       } else {
-        console.error(`❌ [DEBUG] API响应错误，状态码: ${response.status}`);
+        console.error(`❌ [DEBUG] API响应错误或数据无效:`, response);
+        // 初始化空的窗口数据，避免后续错误
+        setCustomWindows(prev => ({
+          ...prev,
+          [boardId]: []
+        }));
+        setCustomWindowsVisible(prev => ({
+          ...prev,
+          [boardId]: {}
+        }));
       }
     } catch (error) {
-      console.error('❌ [DEBUG] 加载自定义窗口失败:', error);
-      console.error('❌ [DEBUG] 错误详情:', error.message, error.stack);
+      console.error(' ❌ [DEBUG] 加载自定义窗口失败:', error);
+      console.error(' ❌ [DEBUG] 错误详情:', error.message, error.stack);
+      
+      // 初始化空的窗口数据，避免后续错误
+      setCustomWindows(prev => ({
+        ...prev,
+        [boardId]: []
+      }));
+      setCustomWindowsVisible(prev => ({
+        ...prev,
+        [boardId]: {}
+      }));
     }
   };
 
@@ -4313,7 +4337,8 @@ function App() {
     const visibility = customWindowsVisible[boardId] || {};
     
     return windows.map(window => {
-      if (!visibility[window.id]) return null;
+      // 默认显示所有窗口，除非明确设置为隐藏
+      if (visibility.hasOwnProperty(window.id) && visibility[window.id] === false) return null;
       
       const windowId = `custom-${boardId}-${window.id}`;
       
