@@ -129,8 +129,36 @@ const api = {
     const formData = new FormData();
     formData.append("file", file);
     
+    // 上传图片文件，不设置Content-Type让浏览器自动设置
     return apiRequest('/materials/upload', {
       method: "POST",
+      headers: {}, // 清空headers让浏览器设置正确的multipart boundary
+      body: formData,
+    });
+  },
+
+  // 上传图片专用API
+  uploadImage: async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    
+    // 使用专门的图片上传API
+    return apiRequest('/images/upload', {
+      method: "POST",
+      headers: {}, // 清空headers让浏览器设置正确的multipart boundary
+      body: formData,
+    });
+  },
+
+  // 上传视频专用API - 非阻塞版本
+  uploadVideo: (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    
+    // 使用专门的视频上传API，返回Promise而不是await
+    return apiRequest('/videos/upload', {
+      method: "POST",
+      headers: {}, // 清空headers让浏览器设置正确的multipart boundary
       body: formData,
     });
   },
@@ -781,7 +809,7 @@ const api = {
   }),
 
   // 删除展板
-  deleteBoard: (boardId) => apiRequest(`/boards/${boardId}`, {
+  deleteBoard: (boardId) => apiRequest(`/api/boards/${boardId}`, {
     method: 'DELETE'
   }),
 
@@ -844,6 +872,22 @@ const api = {
         }
         return response.json();
       });
+  },
+
+  // 删除图片文件
+  deleteImage: (filename) => {
+    console.log(`API请求: 删除图片文件, 文件名: ${filename}`);
+    return apiRequest(`/images/${filename}`, {
+      method: 'DELETE'
+    });
+  },
+
+  // 删除视频文件  
+  deleteVideo: (filename) => {
+    console.log(`API请求: 删除视频文件, 文件名: ${filename}`);
+    return apiRequest(`/videos/${filename}`, {
+      method: 'DELETE'
+    });
   },
 
 };

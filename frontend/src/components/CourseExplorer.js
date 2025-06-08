@@ -151,6 +151,7 @@ const CourseExplorer = ({
         title: file.name,
         key: file.id,
         isLeaf: true,
+        type: file.type, // 保留文件类型信息
       }));
       
       return {
@@ -599,9 +600,16 @@ const CourseExplorer = ({
         console.log('调用删除课程API:', deleteTarget.key);
         await api.deleteCourse(deleteTarget.key);
       } else {
-        // 删除文件
-        console.log('调用删除课程文件API:', deleteTarget.key);
-        await api.deleteCourseFile(deleteTarget.key);
+        // 根据文件类型决定删除方式
+        if (deleteTarget.type === 'board') {
+          // 删除展板
+          console.log('调用删除展板API:', deleteTarget.key);
+          await api.deleteBoard(deleteTarget.key);
+        } else {
+          // 删除普通文件
+          console.log('调用删除课程文件API:', deleteTarget.key);
+          await api.deleteCourseFile(deleteTarget.key);
+        }
       }
       
       console.log('✅ 后端删除API调用成功，开始更新前端状态');

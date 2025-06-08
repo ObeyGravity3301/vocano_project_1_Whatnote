@@ -3,8 +3,26 @@ import './Console.css';
 
 const Console = ({ isVisible, onClose, apiClient, onNavigation }) => {
   const [input, setInput] = useState('');
-  const [history, setHistory] = useState([]);
-  const [commandHistory, setCommandHistory] = useState([]);
+  const [history, setHistory] = useState(() => {
+    // 从localStorage恢复历史记录
+    try {
+      const saved = localStorage.getItem('whatnote-console-history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (error) {
+      console.warn('Failed to load console history:', error);
+      return [];
+    }
+  });
+  const [commandHistory, setCommandHistory] = useState(() => {
+    // 从localStorage恢复命令历史
+    try {
+      const saved = localStorage.getItem('whatnote-console-command-history');
+      return saved ? JSON.parse(saved) : [];
+    } catch (error) {
+      console.warn('Failed to load command history:', error);
+      return [];
+    }
+  });
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [isLoading, setIsLoading] = useState(false);
   const [multiStepContext, setMultiStepContext] = useState(null);
@@ -228,13 +246,25 @@ const Console = ({ isVisible, onClose, apiClient, onNavigation }) => {
   // 添加消息到历史记录
   const addToHistory = (type, content, metadata = {}) => {
     const timestamp = new Date().toLocaleTimeString();
-    setHistory(prev => [...prev, {
+    const newMessage = {
       id: Date.now() + Math.random(),
       type,
       content,
       timestamp,
       ...metadata
-    }]);
+    };
+    
+    setHistory(prev => {
+      const newHistory = [...prev, newMessage];
+      // 保存到localStorage（限制最多保存100条记录）
+      const historyToSave = newHistory.slice(-100);
+      try {
+        localStorage.setItem('whatnote-console-history', JSON.stringify(historyToSave));
+      } catch (error) {
+        console.warn('Failed to save console history:', error);
+      }
+      return newHistory;
+    });
   };
 
   // 执行命令
@@ -250,7 +280,16 @@ const Console = ({ isVisible, onClose, apiClient, onNavigation }) => {
     setCommandHistory(prev => {
       const filtered = prev.filter(cmd => cmd !== command); // 避免重复
       const newHistory = [...filtered, command];
-      return newHistory.slice(-50); // 保留最近50条命令
+      const historyToSave = newHistory.slice(-50); // 保留最近50条命令
+      
+      // 保存到localStorage
+      try {
+        localStorage.setItem('whatnote-console-command-history', JSON.stringify(historyToSave));
+      } catch (error) {
+        console.warn('Failed to save command history:', error);
+      }
+      
+      return historyToSave;
     });
 
     // 添加用户输入到显示历史
@@ -523,6 +562,12 @@ const Console = ({ isVisible, onClose, apiClient, onNavigation }) => {
       case 'clear':
       case 'cls':
         setHistory([]);
+        // 清空localStorage中的历史记录
+        try {
+          localStorage.removeItem('whatnote-console-history');
+        } catch (error) {
+          console.warn('Failed to clear console history from localStorage:', error);
+        }
         addToHistory('system', '控制台已清空');
         return true;
 
@@ -1118,7 +1163,7 @@ ${getContextualHelpCommands(currentContext)}
   if (!isVisible) return null;
 
   return (
-    <div className="console-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <div className="console-overlay">
       <div className="console-container" ref={consoleRef}>
         <div className="console-header">
           <span className="console-title">WhatNote 控制台</span>

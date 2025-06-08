@@ -1,0 +1,282 @@
+.video-window {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.video-window:focus {
+  outline: 2px solid #1890ff;
+  outline-offset: 2px;
+}
+
+.video-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.video-display {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.video-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.video-container-fixed {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.video-container-fixed video {
+  border-radius: 8px;
+  display: block !important;
+  pointer-events: auto !important;
+  outline: none !important;
+  z-index: 1 !important;
+}
+
+/* 确保video控制条在最前面 */
+.video-container-fixed video::-webkit-media-controls {
+  z-index: 2147483647 !important;
+}
+
+.video-container-fixed video::-webkit-media-controls-panel {
+  z-index: 2147483647 !important;
+}
+
+/* 禁用可能冲突的旧样式 */
+.video-container-fixed .video-controls {
+  display: none !important;
+}
+
+.video-container video {
+  border-radius: 8px 8px 0 0;
+  display: block;
+}
+
+.video-controls {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 6px;
+  padding: 4px 8px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.video-container:hover .video-controls {
+  opacity: 1;
+}
+
+.video-controls .ant-btn {
+  color: white;
+  border: none;
+  background: transparent;
+}
+
+.video-controls .ant-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+}
+
+.video-controls-panel {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+  border-top: 1px solid #f0f0f0;
+}
+
+.video-controls-panel .ant-btn {
+  border-radius: 4px;
+}
+
+.video-controls-panel .ant-btn-danger {
+  background: #fff;
+  border-color: #ff4d4f;
+  color: #ff4d4f;
+}
+
+.video-controls-panel .ant-btn-danger:hover {
+  background: #ff4d4f;
+  border-color: #ff4d4f;
+  color: #fff;
+}
+
+.video-upload {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.video-upload .ant-upload-dragger {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #d9d9d9;
+  border-radius: 8px;
+  background: #fafafa;
+  transition: all 0.3s ease;
+  min-height: 200px;
+}
+
+.video-upload .ant-upload-dragger:hover {
+  border-color: #1890ff;
+  background: #f0f8ff;
+}
+
+.video-upload .ant-upload-dragger.ant-upload-drag-hover {
+  border-color: #1890ff;
+  background: #f0f8ff;
+}
+
+.upload-content {
+  text-align: center;
+  padding: 20px;
+}
+
+.upload-content .ant-upload-drag-icon {
+  margin-bottom: 16px;
+}
+
+.upload-content .ant-upload-text {
+  font-size: 16px;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.upload-content .ant-upload-hint {
+  font-size: 14px;
+  color: #999;
+  line-height: 1.5;
+}
+
+.upload-actions {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.saving-indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  z-index: 1000;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .video-window {
+    padding: 12px;
+  }
+  
+  .upload-content .ant-upload-drag-icon {
+    font-size: 36px !important;
+  }
+  
+  .upload-content .ant-upload-text {
+    font-size: 14px;
+  }
+  
+  .upload-content .ant-upload-hint {
+    font-size: 12px;
+  }
+}
+
+/* 焦点状态下的粘贴提示 */
+.video-window:focus-within .video-upload .ant-upload-hint::after {
+  content: "\A💡 也可以使用 Ctrl+V 粘贴视频URL";
+  white-space: pre;
+  color: #1890ff;
+  font-weight: 500;
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+  .video-window {
+    background: #1f1f1f;
+    color: #ffffff;
+  }
+  
+  .video-upload .ant-upload-dragger {
+    background: #2a2a2a;
+    border-color: #404040;
+  }
+  
+  .video-upload .ant-upload-dragger:hover {
+    background: #333333;
+    border-color: #1890ff;
+  }
+  
+  .upload-content .ant-upload-text {
+    color: #cccccc;
+  }
+  
+  .upload-content .ant-upload-hint {
+    color: #999999;
+  }
+}
+
+/* 修复版视频容器样式 - 解决进度条点击问题 */
+.video-container-fixed {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+}
+
+.video-container-fixed video {
+  border-radius: 8px;
+  display: block !important;
+  pointer-events: auto !important;
+  outline: none !important;
+  z-index: 1 !important;
+}
+
+/* 确保video控制条在最前面 */
+.video-container-fixed video::-webkit-media-controls {
+  z-index: 2147483647 !important;
+}
+
+.video-container-fixed video::-webkit-media-controls-panel {
+  z-index: 2147483647 !important;
+}
+
+/* 禁用可能冲突的旧样式 */
+.video-container-fixed .video-controls {
+  display: none !important;
+}

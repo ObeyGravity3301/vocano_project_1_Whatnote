@@ -214,6 +214,28 @@ class ButlerLLM:
         # 记录操作
         self.add_operation("board_info_updated", {"board_id": board_id})
     
+    def clear_board_info(self, board_id):
+        """清理指定展板的信息"""
+        try:
+            # 从Butler日志中删除展板信息
+            if "boards" in self.butler_log and board_id in self.butler_log["boards"]:
+                del self.butler_log["boards"][board_id]
+            
+            # 清理展板相关的上下文信息
+            if hasattr(self, 'board_states') and board_id in self.board_states:
+                del self.board_states[board_id]
+            if hasattr(self, 'board_contexts') and board_id in self.board_contexts:
+                del self.board_contexts[board_id]
+            
+            self._save_butler_log()
+            logger.info(f"已清理Butler中的展板信息: {board_id}")
+            
+            # 记录操作
+            self.add_operation("board_info_cleared", {"board_id": board_id})
+            
+        except Exception as e:
+            logger.error(f"清理展板信息失败: {str(e)}")
+    
     def process_user_request(self, request, status_log=None):
         """
         处理用户请求 - 支持CLI指令和自然语言

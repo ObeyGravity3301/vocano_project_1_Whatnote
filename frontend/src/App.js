@@ -422,8 +422,21 @@ function App() {
       const savedLayout = localStorage.getItem(LAYOUT_STORAGE_KEY);
       if (savedLayout) {
         const layoutData = JSON.parse(savedLayout);
+        console.log('🔄 恢复保存的布局数据:', layoutData);
+        
         // 加载课程文件结构
         setCourseFiles(layoutData.courseFiles || {});
+        
+        // 恢复自定义窗口数据和可见性状态
+        if (layoutData.customWindows) {
+          setCustomWindows(layoutData.customWindows);
+          console.log('🪟 恢复自定义窗口数据:', layoutData.customWindows);
+        }
+        
+        if (layoutData.customWindowsVisible) {
+          setCustomWindowsVisible(layoutData.customWindowsVisible);
+          console.log('👁️ 恢复窗口可见性状态:', layoutData.customWindowsVisible);
+        }
         
         // 如果有上次使用的当前文件，恢复它
         if (layoutData.currentFileKey) {
@@ -436,12 +449,21 @@ function App() {
           
           const lastFile = courseFilesList.find(file => file.key === layoutData.currentFileKey);
           if (lastFile) {
+            console.log('📋 恢复当前展板:', lastFile);
             setCurrentFile(lastFile);
+            
+            // 延迟加载自定义窗口（确保状态已设置）
+            setTimeout(() => {
+              console.log('🔄 延迟加载展板的自定义窗口:', lastFile.key);
+              loadCustomWindows(lastFile.key);
+            }, 100);
+            
             // 如果有上次活跃的PDF，也恢复它
             if (layoutData.activePdfId) {
               const activePdf = lastFile.pdfs.find(pdf => pdf.id === layoutData.activePdfId);
               if (activePdf) {
                 setActivePdfId(layoutData.activePdfId);
+                console.log('📄 恢复活跃PDF:', layoutData.activePdfId);
               }
             }
           }
@@ -519,22 +541,25 @@ function App() {
       const layoutData = {
         courseFiles: serializableCourseFiles,
         currentFileKey: currentFile?.key,
-        activePdfId: activePdfId
+        activePdfId: activePdfId,
+        // 新增：保存自定义窗口数据和可见性状态
+        customWindows: customWindows,
+        customWindowsVisible: customWindowsVisible
       };
       
       localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(layoutData));
-      console.log('布局已保存');
+      console.log('布局已保存，包含自定义窗口数据');
     } catch (error) {
       console.error('保存布局失败:', error);
     }
   };
 
-  // 每当courseFiles变化时自动保存布局
+  // 每当courseFiles或自定义窗口数据变化时自动保存布局
   useEffect(() => {
-    if (Object.keys(courseFiles).length > 0) {
+    if (Object.keys(courseFiles).length > 0 || Object.keys(customWindows).length > 0) {
       saveLayout();
     }
-  }, [courseFiles]);
+  }, [courseFiles, customWindows, customWindowsVisible, currentFile, activePdfId]);
 
   // 获取当前活跃的PDF对象
   const getActivePdf = () => {
@@ -4293,15 +4318,54 @@ function App() {
   };
 
   // 更新自定义窗口内容
-  const updateCustomWindowContent = (boardId, windowId, newContent) => {
+    const updateCustomWindowContent = (boardId, windowId, newContent) => {
     setCustomWindows(prev => ({
       ...prev,
-      [boardId]: prev[boardId]?.map(window => 
-        window.id === windowId 
+      [boardId]: prev[boardId]?.map(window =>
+        window.id === windowId
           ? { ...window, content: newContent }
           : window
       ) || []
     }));
+  };
+
+  // 更新窗口布局（位置和大小）
+  const updateCustomWindowLayout = async (boardId, windowId, layout) => {
+    try {
+      // 先更新本地状态
+      setCustomWindows(prev => ({
+        ...prev,
+        [boardId]: prev[boardId]?.map(window =>
+          window.id === windowId
+            ? { 
+                ...window, 
+                ...(layout.position && { position: layout.position }),
+                ...(layout.size && { size: layout.size })
+              }
+            : window
+        ) || []
+      }));
+
+      // 构建更新数据
+      const currentWindow = customWindows[boardId]?.find(w => w.id === windowId);
+      if (currentWindow) {
+        const updatedWindow = {
+          ...currentWindow,
+          ...(layout.position && { position: layout.position }),
+          ...(layout.size && { size: layout.size })
+        };
+
+        // 保存到后端
+        await api.put(`/api/boards/${boardId}/windows/${windowId}`, {
+          window: updatedWindow
+        });
+        
+        console.log(`✅ 窗口 ${windowId} 布局已保存:`, layout);
+      }
+    } catch (error) {
+      console.error('保存窗口布局失败:', error);
+      // 可以显示错误提示，但不影响用户操作
+    }
   };
 
   // 删除自定义窗口
@@ -4336,18 +4400,101 @@ function App() {
     const windows = customWindows[boardId] || [];
     const visibility = customWindowsVisible[boardId] || {};
     
-    return windows.map(window => {
+    return windows.map((window, index) => {
       // 默认显示所有窗口，除非明确设置为隐藏
       if (visibility.hasOwnProperty(window.id) && visibility[window.id] === false) return null;
       
       const windowId = `custom-${boardId}-${window.id}`;
+      const windowType = window.type || 'text';
+      
+      // 智能布局：如果窗口没有位置信息，自动计算一个不重叠的位置
+      const getSmartPosition = (index, hasPosition) => {
+        if (hasPosition) return window.position;
+        
+        // 计算不重叠的位置（瀑布式布局）
+        const offsetX = (index % 4) * 50; // 每行最多4个窗口
+        const offsetY = Math.floor(index / 4) * 60; // 行间距60px
+        const baseX = 120 + offsetX;
+        const baseY = 120 + offsetY;
+        
+        return { x: baseX, y: baseY };
+      };
+      
+      // 根据窗口类型设置不同的默认大小和颜色
+      const getWindowConfig = (type) => {
+        switch (type) {
+          case 'image':
+            return {
+              defaultSize: { width: 400, height: 350 },
+              titleBarColor: "#fa8c16", // 橙色标题栏表示图片窗口
+              windowType: "image"
+            };
+          case 'video':
+            return {
+              defaultSize: { width: 500, height: 400 },
+              titleBarColor: "#1890ff", // 蓝色标题栏表示视频窗口
+              windowType: "video"
+            };
+          case 'text':
+          default:
+            return {
+              defaultSize: { width: 300, height: 200 },
+              titleBarColor: "#52c41a", // 绿色标题栏表示文本窗口
+              windowType: "textbox"
+            };
+        }
+      };
+      
+      const config = getWindowConfig(windowType);
+      
+      // 根据窗口类型渲染不同的组件
+      const renderWindowContent = () => {
+        switch (windowType) {
+          case 'image':
+            // 动态导入图片窗口组件
+            const ImageWindow = React.lazy(() => import('./components/ImageWindow'));
+            return (
+              <React.Suspense fallback={<div style={{ padding: '20px', textAlign: 'center' }}>加载中...</div>}>
+                <ImageWindow
+                  window={window}
+                  boardId={boardId}
+                  onContentChange={(newContent) => updateCustomWindowContent(boardId, window.id, newContent)}
+                  onClose={() => deleteCustomWindow(boardId, window.id)}
+                />
+              </React.Suspense>
+            );
+          case 'video':
+            // 动态导入视频窗口组件
+            const VideoWindow = React.lazy(() => import('./components/VideoWindow'));
+            return (
+              <React.Suspense fallback={<div style={{ padding: '20px', textAlign: 'center' }}>加载中...</div>}>
+                <VideoWindow
+                  window={window}
+                  boardId={boardId}
+                  onContentChange={(newContent) => updateCustomWindowContent(boardId, window.id, newContent)}
+                  onClose={() => deleteCustomWindow(boardId, window.id)}
+                />
+              </React.Suspense>
+            );
+          case 'text':
+          default:
+            return (
+              <TextBoxWindow
+                window={window}
+                boardId={boardId}
+                onContentChange={(newContent) => updateCustomWindowContent(boardId, window.id, newContent)}
+                onClose={() => deleteCustomWindow(boardId, window.id)}
+              />
+            );
+        }
+      };
       
       return (
         <DraggableWindow
           key={windowId}
           title={window.title}
-          defaultPosition={window.position || { x: 100, y: 100 }}
-          defaultSize={window.size || { width: 300, height: 200 }}
+          defaultPosition={getSmartPosition(index, window.position)}
+          defaultSize={window.size || config.defaultSize}
           onClose={() => {
             setCustomWindowsVisible(prev => ({
               ...prev,
@@ -4357,28 +4504,34 @@ function App() {
               }
             }));
           }}
-          onDragStop={(e, data) => {
-            // 可以在这里保存位置到后端
+          onDragStop={async (e, data) => {
+            // 保存位置到后端
             console.log(`窗口 ${window.id} 移动到:`, data);
+            const newPosition = { x: data.x, y: data.y };
+            await updateCustomWindowLayout(boardId, window.id, { position: newPosition });
           }}
-          onResize={(e, dir, ref, delta, pos) => {
-            // 可以在这里保存大小到后端
+          onResize={async (e, dir, ref, delta, pos) => {
+            // 保存大小到后端
             const newSize = { width: ref.offsetWidth, height: ref.offsetHeight };
-            console.log(`窗口 ${window.id} 调整大小到:`, newSize);
+            // 检查pos参数是否存在，避免null读取错误
+            const newPosition = pos ? { x: pos.x, y: pos.y } : null;
+            console.log(`窗口 ${window.id} 调整大小到:`, newSize, newPosition);
+            
+            const layoutUpdate = { size: newSize };
+            if (newPosition) {
+              layoutUpdate.position = newPosition;
+            }
+            
+            await updateCustomWindowLayout(boardId, window.id, layoutUpdate);
           }}
           zIndex={600 + parseInt(window.id.replace(/\D/g, '')) % 100} // 动态z-index
           windowId={windowId}
-          windowType="textbox"
-          onBringToFront={() => handleBringNonPdfWindowToFront(windowId, 'textbox')}
-          titleBarColor="#52c41a" // 绿色标题栏表示自定义窗口
+          windowType={config.windowType}
+          onBringToFront={() => handleBringNonPdfWindowToFront(windowId, config.windowType)}
+          titleBarColor={config.titleBarColor}
           resizable
         >
-          <TextBoxWindow
-            window={window}
-            boardId={boardId}
-            onContentChange={(newContent) => updateCustomWindowContent(boardId, window.id, newContent)}
-            onClose={() => deleteCustomWindow(boardId, window.id)}
-          />
+          {renderWindowContent()}
         </DraggableWindow>
       );
     });
