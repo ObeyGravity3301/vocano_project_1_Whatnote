@@ -2459,7 +2459,7 @@ function App() {
     
     setCurrentFile(fileNode);
     
-    // 🔧 强化：无条件加载自定义窗口
+    // 🔧 强化：无条件加载自定义窗口，增加多次重试机制
     if (fileNode.key) {
       console.log(`🔄 [DEBUG] 准备调用 loadCustomWindows，boardId: ${fileNode.key}`);
       
@@ -2467,14 +2467,19 @@ function App() {
       loadCustomWindows(fileNode.key);
       console.log(`📞 [DEBUG] loadCustomWindows 调用完成 (立即)`);
       
-      // 🔧 新增：延时再次调用，确保数据加载
+      // 🔧 增强：多次延时调用，确保数据加载成功
       setTimeout(() => {
         console.log(`⏰ [DEBUG] 延时500ms后再次调用 loadCustomWindows: ${fileNode.key}`);
         loadCustomWindows(fileNode.key);
-        console.log(`📞 [DEBUG] loadCustomWindows 延时调用完成`);
+        console.log(`📞 [DEBUG] loadCustomWindows 延时调用完成 (500ms)`);
       }, 500);
       
-
+      // 🔧 新增：更长延时的第三次调用，处理网络慢的情况
+      setTimeout(() => {
+        console.log(`⏰ [DEBUG] 延时1500ms后第三次调用 loadCustomWindows: ${fileNode.key}`);
+        loadCustomWindows(fileNode.key);
+        console.log(`📞 [DEBUG] loadCustomWindows 第三次调用完成 (1500ms)`);
+      }, 1500);
       
     } else {
       console.warn(`⚠️ [DEBUG] 文件节点没有key，无法加载自定义窗口`);
@@ -4567,6 +4572,31 @@ function App() {
         console.log(`🪟 [DEBUG] 获取到的窗口数据:`, windows);
         console.log(`📊 [DEBUG] 窗口数量: ${windows.length}`);
         
+        // 🔧 新增：为每个窗口输出详细信息，特别是视频窗口
+        windows.forEach((window, index) => {
+          console.log(`🪟 [DEBUG] 窗口 ${index + 1}:`, {
+            id: window.id,
+            type: window.type,
+            title: window.title,
+            hasContent: !!window.content,
+            contentPreview: window.content ? `${window.content.substring(0, 50)}...` : '(空)',
+            contentLength: window.content ? window.content.length : 0
+          });
+          
+          // 特别关注视频窗口
+          if (window.type === 'video') {
+            console.log(`🎬 [DEBUG] 视频窗口详情:`, {
+              id: window.id,
+              title: window.title,
+              videoUrl: window.content,
+              isRelativeUrl: window.content && window.content.startsWith('/api/videos/'),
+              fullVideoUrl: window.content && window.content.startsWith('/api/videos/') 
+                ? `${api.getBaseUrl()}${window.content}` 
+                : window.content
+            });
+          }
+        });
+        
         // 更新自定义窗口状态
         setCustomWindows(prev => {
           const newState = {
@@ -4581,7 +4611,7 @@ function App() {
         const visibilityMap = {};
         windows.forEach(window => {
           visibilityMap[window.id] = true;
-          console.log(`👁️ [DEBUG] 设置窗口可见: ${window.id} - ${window.title}`);
+          console.log(`👁️ [DEBUG] 设置窗口可见: ${window.id} - ${window.title} (${window.type})`);
         });
         
         setCustomWindowsVisible(prev => {
@@ -4594,6 +4624,15 @@ function App() {
         });
         
         console.log(`✅ [DEBUG] 已加载展板 ${boardId} 的 ${windows.length} 个自定义窗口`);
+        
+        // 🔧 新增：触发状态强制更新事件
+        setTimeout(() => {
+          console.log(`🔄 [DEBUG] 触发窗口状态强制更新事件`);
+          window.dispatchEvent(new CustomEvent('customWindowsLoaded', {
+            detail: { boardId, windows }
+          }));
+        }, 100);
+        
       } else {
         console.error(`❌ [DEBUG] API响应错误或数据无效:`, response);
         // 初始化空的窗口数据，避免后续错误

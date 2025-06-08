@@ -249,13 +249,15 @@ class SimpleExpert:
             if task.task_type == "annotation" or task.task_type == "generate_annotation":
                 filename = task.params.get('filename')
                 page_number = task.params.get('pageNumber', task.params.get('page_number'))
+                
                 # 🔧 新增：支持显式传递的风格参数
                 annotation_style = task.params.get('annotationStyle')
                 custom_prompt = task.params.get('customPrompt')
                 
                 # 🔧 修复：处理systemPrompt参数（批量注释功能）
+                # 批量注释的systemPrompt优先级最高，直接覆盖其他设置
                 system_prompt = task.params.get('systemPrompt')
-                if system_prompt and not annotation_style:
+                if system_prompt:
                     annotation_style = 'custom'
                     custom_prompt = system_prompt
                 result = await self._generate_annotation_task(filename, page_number, annotation_style, custom_prompt)

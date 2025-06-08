@@ -1188,11 +1188,16 @@ async def upload_image(
     timestamp = int(time.time())
     name, ext = os.path.splitext(file.filename)
     
+    # 🔧 修复：正确处理文件名中的非ASCII字符
+    # 将非ASCII字符替换为安全字符
+    import re
+    safe_name = re.sub(r'[^\w\-_\.]', '_', name)
+    
     # 如果提供了窗口ID，将其包含在文件名中（类似视频的命名方式）
     if window_id:
-        unique_filename = f"{name}_{window_id}_{timestamp}{ext}"
+        unique_filename = f"{safe_name}_{window_id}_{timestamp}{ext}"
     else:
-        unique_filename = f"{name}_{timestamp}{ext}"
+        unique_filename = f"{safe_name}_{timestamp}{ext}"
     
     save_path = os.path.join(images_dir, unique_filename)
     
@@ -1219,14 +1224,37 @@ async def upload_image(
 @app.get('/api/images/view/{filename}')
 async def view_image(filename: str):
     """查看图片文件"""
-    images_dir = os.path.join(UPLOAD_DIR, 'images')
-    file_path = os.path.join(images_dir, filename)
+    import urllib.parse
     
-    if not os.path.exists(file_path):
+    # 🔧 修复：处理URL编码的文件名
+    try:
+        decoded_filename = urllib.parse.unquote(filename)
+        logger.info(f"图片文件查看请求: 原始={filename}, 解码后={decoded_filename}")
+    except Exception as e:
+        logger.warning(f"URL解码失败，使用原始文件名: {e}")
+        decoded_filename = filename
+    
+    images_dir = os.path.join(UPLOAD_DIR, 'images')
+    
+    # 🔧 增强：尝试多种文件名匹配方式
+    file_candidates = [
+        os.path.join(images_dir, filename),          # 原始文件名
+        os.path.join(images_dir, decoded_filename),  # 解码后文件名  
+    ]
+    
+    file_path = None
+    for candidate in file_candidates:
+        if os.path.exists(candidate):
+            file_path = candidate
+            logger.info(f"找到图片文件: {candidate}")
+            break
+    
+    if not file_path:
+        logger.warning(f"图片文件不存在，尝试过的路径: {file_candidates}")
         raise HTTPException(status_code=404, detail="图片文件不存在")
     
     # 根据文件扩展名设置正确的媒体类型
-    ext = os.path.splitext(filename.lower())[1]
+    ext = os.path.splitext(file_path.lower())[1]
     media_type_map = {
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg', 
@@ -1241,14 +1269,17 @@ async def view_image(filename: str):
     return FileResponse(
         file_path,
         media_type=media_type,
-        filename=filename
+        filename=os.path.basename(file_path)
     )
 
 # 视频相关API
 @app.post('/api/videos/upload')
-async def upload_video(file: UploadFile = File(...)):
+async def upload_video(
+    file: UploadFile = File(...),
+    window_id: Optional[str] = Form(None)
+):
     """专门用于视频上传的API"""
-    logger.info(f"收到视频上传请求: {file.filename}")
+    logger.info(f"收到视频上传请求: {file.filename}, window_id: {window_id}")
     
     # 验证是否为视频文件
     allowed_extensions = {'.mp4', '.webm', '.ogg', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.m4v'}
@@ -1278,12 +1309,16 @@ async def upload_video(file: UploadFile = File(...)):
     timestamp = int(time.time())
     name, ext = os.path.splitext(file.filename)
     
-    # 如果提供了窗口ID，将其包含在文件名中（类似视频的命名方式）
-    window_id = window_id  # 获取窗口ID参数
+    # 🔧 修复：正确处理文件名中的非ASCII字符
+    # 将非ASCII字符替换为安全字符
+    import re
+    safe_name = re.sub(r'[^\w\-_\.]', '_', name)
+    
+    # 如果提供了窗口ID，将其包含在文件名中
     if window_id:
-        unique_filename = f"{name}_{window_id}_{timestamp}{ext}"
+        unique_filename = f"{safe_name}_{window_id}_{timestamp}{ext}"
     else:
-        unique_filename = f"{name}_{timestamp}{ext}"
+        unique_filename = f"{safe_name}_{timestamp}{ext}"
     
     save_path = os.path.join(videos_dir, unique_filename)
     

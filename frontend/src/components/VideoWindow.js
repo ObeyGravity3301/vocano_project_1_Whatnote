@@ -5,7 +5,8 @@ import {
   VideoCameraOutlined, 
   UploadOutlined, 
   DeleteOutlined, 
-  CopyOutlined
+  CopyOutlined,
+  ReloadOutlined
 } from '@ant-design/icons';
 import './VideoWindow.css';
 import api from '../api';
@@ -466,6 +467,29 @@ const VideoWindow = ({
                   onClick={handleCopyUrl}
                 >
                   复制链接
+                </Button>
+                
+                <Button
+                  size="small"
+                  icon={<ReloadOutlined />}
+                  onClick={() => {
+                    const content = window.content || '';
+                    console.log(`🔄 [视频窗口] 手动刷新，重新加载视频:`, content);
+                    if (content) {
+                      // 强制重新设置视频URL
+                      if (content.startsWith('/api/videos/')) {
+                        const fullUrl = `${api.getBaseUrl()}${content}`;
+                        setVideoUrl(fullUrl);
+                      } else {
+                        setVideoUrl(content);
+                      }
+                      message.success('视频已刷新');
+                    } else {
+                      message.warning('没有可刷新的视频内容');
+                    }
+                  }}
+                >
+                  刷新
                 </Button>
                 
                 <Popconfirm
