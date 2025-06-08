@@ -26,7 +26,9 @@ const NoteWindow = ({
   // 新增boardId prop用于风格选择器
   boardId = null,
   // 新增pdf对象用于获取页面加载状态
-  pdf = null
+  pdf = null,
+  // 新增批量注释相关props
+  onBatchAnnotate = null
 }) => {
   console.log('🎨 [DEBUG] NoteWindow 组件渲染:', {
     type,
@@ -79,6 +81,17 @@ const NoteWindow = ({
   const [rawText, setRawText] = useState('');
   const [loadingRawText, setLoadingRawText] = useState(false);
   const [autoSaveVisible, setAutoSaveVisible] = useState(false);
+
+  // 批量注释相关状态
+  const [batchModalVisible, setBatchModalVisible] = useState(false);
+  const [batchMode, setBatchMode] = useState('toEnd'); // 'toEnd', 'custom', 'preset'
+  const [customPageCount, setCustomPageCount] = useState(10);
+  const [presetPageCount, setPresetPageCount] = useState(5);
+  const [selectedAnnotationStyle, setSelectedAnnotationStyle] = useState('detailed');
+  const [customAnnotationPrompt, setCustomAnnotationPrompt] = useState('');
+  const [batchInProgress, setBatchInProgress] = useState(false);
+  const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, currentPage: 0 });
+  const [batchAbortController, setBatchAbortController] = useState(null);
 
   // 监听内容变化
   useEffect(() => {
@@ -431,7 +444,101 @@ const NoteWindow = ({
       onChange(editedContent);
     }
   };
-  
+
+  // 处理批量注释
+  const handleBatchAnnotate = () => {
+    if (!pdf || !onBatchAnnotate) {
+      message.error('批量注释功能不可用');
+      return;
+    }
+    
+    setBatchModalVisible(true);
+  };
+
+  // 开始批量注释
+  const startBatchAnnotation = async () => {
+    if (!pdf || !onBatchAnnotate) {
+      message.error('批量注释功能不可用');
+      return;
+    }
+
+    setBatchModalVisible(false);
+    setBatchInProgress(true);
+
+    // 计算要处理的页面范围
+    let startPage = pageNumber;
+    let endPage;
+    
+    switch (batchMode) {
+      case 'toEnd':
+        endPage = pdf.totalPages;
+        break;
+      case 'preset':
+        endPage = Math.min(startPage + presetPageCount - 1, pdf.totalPages);
+        break;
+      case 'custom':
+        endPage = Math.min(startPage + customPageCount - 1, pdf.totalPages);
+        break;
+      default:
+        endPage = pdf.totalPages;
+    }
+
+    const totalPages = endPage - startPage + 1;
+    setBatchProgress({ current: 0, total: totalPages, currentPage: startPage });
+
+    // 创建中止控制器
+    const abortController = new AbortController();
+    setBatchAbortController(abortController);
+
+    try {
+      // 构建批量注释配置
+      const batchConfig = {
+        startPage,
+        endPage,
+        annotationStyle: selectedAnnotationStyle,
+        customPrompt: selectedAnnotationStyle === 'custom' ? customAnnotationPrompt : null,
+        signal: abortController.signal
+      };
+
+      console.log('🚀 开始批量注释:', batchConfig);
+      console.log('🎯 当前注释风格:', selectedAnnotationStyle);
+      console.log('🎯 自定义提示词内容:', customAnnotationPrompt);
+      console.log('🎯 是否为自定义风格:', selectedAnnotationStyle === 'custom');
+      console.log('🎯 实际传递的自定义提示词:', selectedAnnotationStyle === 'custom' ? customAnnotationPrompt : null);
+      message.success(`开始批量注释第${startPage}-${endPage}页，共${totalPages}页`);
+
+      // 调用批量注释函数
+      await onBatchAnnotate(batchConfig, (progress) => {
+        setBatchProgress({
+          current: progress.completed,
+          total: progress.total,
+          currentPage: progress.currentPage
+        });
+      });
+
+      message.success(`批量注释完成！已处理${totalPages}页`);
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        message.info('批量注释已停止');
+      } else {
+        console.error('批量注释失败:', error);
+        message.error('批量注释失败: ' + error.message);
+      }
+    } finally {
+      setBatchInProgress(false);
+      setBatchAbortController(null);
+      setBatchProgress({ current: 0, total: 0, currentPage: 0 });
+    }
+  };
+
+  // 停止批量注释
+  const stopBatchAnnotation = () => {
+    if (batchAbortController) {
+      batchAbortController.abort();
+      message.info('正在停止批量注释...');
+    }
+  };
+
   return (
     <div className="note-editor-container"
       data-note-type={type}
@@ -447,6 +554,52 @@ const NoteWindow = ({
             console.log('注释风格已更改:', { style, customPrompt });
           }}
         />
+      )}
+      
+      {/* 批量注释功能区 - 只在注释窗口显示 */}
+      {type === 'annotation' && pdf && onBatchAnnotate && (
+        <div className="batch-annotation-section">
+          {batchInProgress ? (
+            <div className="batch-progress-container">
+              <div className="batch-progress-info">
+                <span className="batch-progress-text">
+                  🔄 批量注释进行中... ({batchProgress.current}/{batchProgress.total})
+                </span>
+                <span className="batch-current-page">
+                  当前处理第{batchProgress.currentPage}页
+                </span>
+              </div>
+              <div className="batch-progress-bar">
+                <div 
+                  className="batch-progress-fill"
+                  style={{ width: `${(batchProgress.current / batchProgress.total) * 100}%` }}
+                />
+              </div>
+              <Button 
+                size="small" 
+                danger 
+                onClick={stopBatchAnnotation}
+                icon={<CloseOutlined />}
+              >
+                停止
+              </Button>
+            </div>
+          ) : (
+            <Button 
+              type="primary" 
+              size="small"
+              onClick={handleBatchAnnotate}
+              disabled={currentPageLoading}
+              style={{ 
+                background: 'linear-gradient(45deg, #1890ff, #722ed1)',
+                border: 'none',
+                fontWeight: 'bold'
+              }}
+            >
+              📝 批量注释
+            </Button>
+          )}
+        </div>
       )}
       
       <div className="note-editor-header">
@@ -636,6 +789,110 @@ const NoteWindow = ({
           <p>{type === 'annotation' 
             ? '提交后将使用您的建议重新生成注释，不填则直接重新生成' 
             : '提供建议可以使改进更有针对性，不填则系统将自动改进笔记质量'}</p>
+        </div>
+      </Modal>
+
+      {/* 批量注释配置弹窗 */}
+      <Modal
+        title="批量注释配置"
+        open={batchModalVisible}
+        onOk={startBatchAnnotation}
+        onCancel={() => setBatchModalVisible(false)}
+        okText="开始批量注释"
+        cancelText="取消"
+        width={600}
+      >
+        <div className="batch-config-container">
+          <div className="batch-section">
+            <h4>📄 页面范围</h4>
+            <Radio.Group 
+              value={batchMode} 
+              onChange={(e) => setBatchMode(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <div className="batch-option">
+                <Radio value="toEnd">批量注释到最后一页</Radio>
+                <div className="batch-option-desc">
+                  从第{pageNumber}页到第{pdf?.totalPages || 0}页 (共{pdf?.totalPages ? pdf.totalPages - pageNumber + 1 : 0}页)
+                </div>
+              </div>
+              
+              <div className="batch-option">
+                <Radio value="preset">预设页数</Radio>
+                <div className="batch-option-controls">
+                  <Radio.Group 
+                    value={presetPageCount}
+                    onChange={(e) => setPresetPageCount(e.target.value)}
+                    disabled={batchMode !== 'preset'}
+                  >
+                    <Radio.Button value={5}>5页</Radio.Button>
+                    <Radio.Button value={10}>10页</Radio.Button>
+                    <Radio.Button value={20}>20页</Radio.Button>
+                  </Radio.Group>
+                  <div className="batch-option-desc">
+                    从第{pageNumber}页开始，向后{presetPageCount}页
+                  </div>
+                </div>
+              </div>
+              
+              <div className="batch-option">
+                <Radio value="custom">自定义页数</Radio>
+                <div className="batch-option-controls">
+                  <Input
+                    type="number"
+                    min="1"
+                    max={pdf?.totalPages ? pdf.totalPages - pageNumber + 1 : 100}
+                    value={customPageCount}
+                    onChange={(e) => setCustomPageCount(parseInt(e.target.value) || 1)}
+                    disabled={batchMode !== 'custom'}
+                    style={{ width: 100 }}
+                    addonAfter="页"
+                  />
+                  <div className="batch-option-desc">
+                    从第{pageNumber}页开始，向后{customPageCount}页
+                  </div>
+                </div>
+              </div>
+            </Radio.Group>
+          </div>
+
+          <div className="batch-section">
+            <h4>🎨 注释风格</h4>
+            <Radio.Group 
+              value={selectedAnnotationStyle} 
+              onChange={(e) => setSelectedAnnotationStyle(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              <div className="annotation-style-options">
+                <Radio value="detailed">📝 详细注释</Radio>
+                <Radio value="keywords">🔑 关键词解释</Radio>
+                <Radio value="translation">🌐 文本翻译</Radio>
+                <Radio value="custom">⚙️ 自定义风格</Radio>
+              </div>
+            </Radio.Group>
+            
+            {selectedAnnotationStyle === 'custom' && (
+              <div className="custom-prompt-section">
+                <Input.TextArea
+                  value={customAnnotationPrompt}
+                  onChange={(e) => setCustomAnnotationPrompt(e.target.value)}
+                  placeholder="请输入自定义注释风格的提示词，例如：请用简洁的中文总结要点，突出重要概念..."
+                  rows={3}
+                  style={{ marginTop: 8 }}
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="batch-section">
+            <h4>⚠️ 注意事项</h4>
+            <ul className="batch-warnings">
+              <li>批量注释将覆盖已有的注释内容</li>
+              <li>处理过程中可以随时点击"停止"按钮中断</li>
+              <li>建议在网络稳定的环境下进行批量操作</li>
+              <li>大量页面的批量注释可能需要较长时间</li>
+            </ul>
+          </div>
         </div>
       </Modal>
     </div>

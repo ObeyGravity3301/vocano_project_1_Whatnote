@@ -252,6 +252,12 @@ class SimpleExpert:
                 # 🔧 新增：支持显式传递的风格参数
                 annotation_style = task.params.get('annotationStyle')
                 custom_prompt = task.params.get('customPrompt')
+                
+                # 🔧 修复：处理systemPrompt参数（批量注释功能）
+                system_prompt = task.params.get('systemPrompt')
+                if system_prompt and not annotation_style:
+                    annotation_style = 'custom'
+                    custom_prompt = system_prompt
                 result = await self._generate_annotation_task(filename, page_number, annotation_style, custom_prompt)
             elif task.task_type == "vision_annotation":
                 result = await self._vision_annotation_task(task.params)
@@ -538,12 +544,13 @@ PDF文件：{filename}
         elif style == 'custom':
             # 风格4：自定义提示词
             if custom_prompt:
-                return f"""{base_info}
+                final_prompt = f"""{base_info}
 
 用户自定义要求：
 {custom_prompt}
 
 请根据用户的自定义要求为以上内容生成注释："""
+                return final_prompt
             else:
                 # 如果没有自定义提示词，回退到详细风格
                 return self._get_annotation_prompt(filename, page_number, page_text, 'detailed')

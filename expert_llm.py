@@ -1644,8 +1644,11 @@ class ExpertLLM:
         session_id = params.get("sessionId")
         current_annotation = params.get("currentAnnotation")
         improve_request = params.get("improveRequest")
+        system_prompt = params.get("systemPrompt")  # 🔥 添加systemPrompt支持
         
         logger.info(f"并发生成注释: {filename} 第{page_number}页")
+        logger.info(f"🎯 systemPrompt: {system_prompt}")
+        print(f"🔥 [FORCE DEBUG] systemPrompt: {system_prompt}")  # 强制输出到控制台
         
         # 导入注释生成功能
         from controller import get_page_text, get_page_image
@@ -1661,8 +1664,12 @@ class ExpertLLM:
                 prompt = f"【注释重新生成任务】\n当前注释:\n{current_annotation}\n\n页面内容:\n{text}\n\n请生成一个更好的注释版本。"
             elif improve_request:
                 prompt = f"【注释生成任务】\n用户指导:\n{improve_request}\n\n页面内容:\n{text}\n\n请根据用户指导生成注释。"
+            elif system_prompt:  # 🔥 优先使用systemPrompt
+                prompt = f"【注释生成任务】\n用户要求:\n{system_prompt}\n\n页面内容:\n{text}\n\n请根据用户要求生成注释。"
             else:
                 prompt = f"【注释生成任务】请为以下PDF页面内容生成简洁但有信息量的注释:\n\n{text}"
+            
+            logger.info(f"🎯 最终构建的提示词: {prompt[:200]}...")
             
             # 使用异步LLM调用
             return await self._async_call_llm(prompt, task_session_id)

@@ -4051,6 +4051,7 @@ function App() {
             onGenerate={() => handleGenerateAnnotation(pdf.id)}
             onImprove={(improvePrompt) => handleGenerateAnnotation(pdf.id, improvePrompt)}
             onForceVisionAnnotate={() => handleForceVisionAnnotate(pdf.id)}
+            onBatchAnnotate={(config, progressCallback) => handleBatchAnnotation(pdf.id, config, progressCallback)}
             boardId={currentFile ? currentFile.key : null}
             pdf={pdf}
           />
@@ -4087,6 +4088,283 @@ function App() {
         {content}
       </DraggableWindow>
     );
+  };
+
+  // 批量注释功能
+  const handleBatchAnnotation = async (pdfId, config, progressCallback) => {
+    if (!currentFile) return;
+    
+    const pdf = courseFiles[currentFile.key]?.find(p => p.id === pdfId);
+    if (!pdf) return;
+    
+    const filename = pdf.serverFilename || pdf.filename;
+    
+    // 确保使用统一的boardId
+    let boardId = currentExpertBoardId || (currentFile ? currentFile.key : null);
+    if (!currentExpertBoardId && currentFile) {
+      setCurrentExpertBoardId(currentFile.key);
+      boardId = currentFile.key;
+    }
+    
+    const { startPage, endPage, annotationStyle, customPrompt, signal } = config;
+    const totalPages = endPage - startPage + 1;
+    
+    console.log(`🔄 开始批量注释 ${filename} (第${startPage}-${endPage}页，共${totalPages}页)，风格: ${annotationStyle}`);
+    console.log(`🎯 接收到的自定义提示词:`, customPrompt);
+
+    // 获取或创建会话ID
+    const sessionId = pdf.sessionId || `session-batch-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    if (!pdf.sessionId) {
+      updatePdfProperty(pdfId, 'sessionId', sessionId);
+    }
+    
+    let completedCount = 0;
+    const results = [];
+    
+    // 构建批量注释的系统提示词
+    let systemPrompt = '';
+    switch (annotationStyle) {
+      case 'keywords':
+        systemPrompt = '请为页面内容提供关键词解释和要点总结。';
+        break;
+      case 'translation':
+        systemPrompt = '请将页面内容翻译成中文并提供简要说明。';
+        break;
+      case 'detailed':
+        systemPrompt = '请为页面内容提供详细的注释和解释。';
+        break;
+      case 'custom':
+        systemPrompt = customPrompt || '请为页面内容提供注释。';
+        break;
+      default:
+        systemPrompt = '请为页面内容提供适当的注释。';
+    }
+    
+    console.log(`🎯 最终使用的系统提示词:`, systemPrompt);
+    
+    try {
+      // 逐页处理注释生成
+      for (let currentPage = startPage; currentPage <= endPage; currentPage++) {
+        // 检查是否被取消
+        if (signal.aborted) {
+          throw new Error('批量注释已被用户取消');
+        }
+        
+        console.log(`📝 正在处理第${currentPage}页...`);
+        
+        // 更新进度
+        progressCallback({
+          completed: completedCount,
+          total: totalPages,
+          currentPage: currentPage
+        });
+        
+        // 设置当前页面的加载状态
+        setCourseFiles(prev => {
+          const filePdfs = [...(prev[currentFile.key] || [])];
+          const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+          
+          if (pdfIndex !== -1) {
+            filePdfs[pdfIndex] = {
+              ...filePdfs[pdfIndex],
+              pageAnnotationLoadings: {
+                ...filePdfs[pdfIndex].pageAnnotationLoadings,
+                [currentPage]: true
+              }
+            };
+            
+            return {
+              ...prev,
+              [currentFile.key]: filePdfs
+            };
+          }
+          
+          return prev;
+        });
+        
+        try {
+          // 为当前页面生成注释
+          const result = await api.generateAnnotation(
+            filename,
+            currentPage,
+            sessionId,
+            null, // 不传入现有注释，全新生成
+            null, // 不传入改进请求
+            boardId,
+            systemPrompt // 使用系统提示词
+          );
+          
+          const annotation = result?.annotation || result?.note || result || '';
+          const annotationSource = result?.source || 'text';
+          
+          if (annotation && annotation.trim()) {
+            // 存储注释结果
+            results.push({
+              page: currentPage,
+              annotation: annotation,
+              source: annotationSource
+            });
+            
+            // 更新PDF状态
+            setCourseFiles(prev => {
+              const filePdfs = [...(prev[currentFile.key] || [])];
+              const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+              
+              if (pdfIndex !== -1) {
+                const updatedPdf = {
+                  ...filePdfs[pdfIndex],
+                  pageAnnotations: {
+                    ...filePdfs[pdfIndex].pageAnnotations,
+                    [currentPage]: annotation
+                  },
+                  pageAnnotationSources: {
+                    ...filePdfs[pdfIndex].pageAnnotationSources,
+                    [currentPage]: annotationSource
+                  },
+                  pageAnnotationLoadings: {
+                    ...filePdfs[pdfIndex].pageAnnotationLoadings,
+                    [currentPage]: false
+                  }
+                };
+                
+                // 如果当前处理的是正在显示的页面，更新显示内容
+                if (filePdfs[pdfIndex].currentPage === currentPage) {
+                  updatedPdf.annotation = annotation;
+                }
+                
+                filePdfs[pdfIndex] = updatedPdf;
+                
+                return {
+                  ...prev,
+                  [currentFile.key]: filePdfs
+                };
+              }
+              
+              return prev;
+            });
+            
+            console.log(`✅ 第${currentPage}页注释生成成功 (${annotation.length}字符)`);
+          } else {
+            console.warn(`⚠️ 第${currentPage}页注释生成失败：无有效内容`);
+            results.push({
+              page: currentPage,
+              annotation: '',
+              error: '无有效内容'
+            });
+          }
+        } catch (error) {
+          console.error(`❌ 第${currentPage}页注释生成失败:`, error);
+          results.push({
+            page: currentPage,
+            annotation: '',
+            error: error.message
+          });
+          
+          // 清除加载状态
+          setCourseFiles(prev => {
+            const filePdfs = [...(prev[currentFile.key] || [])];
+            const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+            
+            if (pdfIndex !== -1) {
+              filePdfs[pdfIndex] = {
+                ...filePdfs[pdfIndex],
+                pageAnnotationLoadings: {
+                  ...filePdfs[pdfIndex].pageAnnotationLoadings,
+                  [currentPage]: false
+                }
+              };
+              
+              return {
+                ...prev,
+                [currentFile.key]: filePdfs
+              };
+            }
+            
+            return prev;
+          });
+        }
+        
+        completedCount++;
+        
+        // 更新最终进度
+        progressCallback({
+          completed: completedCount,
+          total: totalPages,
+          currentPage: currentPage
+        });
+        
+        // 在页面之间添加小的延迟，避免过快的请求
+        if (currentPage < endPage) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // 记录批量注释完成日志
+      const logEvent = new CustomEvent('llm-interaction', {
+        detail: {
+          id: `batch-annotation-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          llmType: 'expert',
+          query: `批量注释: ${filename} 第${startPage}-${endPage}页 (${annotationStyle}风格)`,
+          response: `成功处理${results.filter(r => r.annotation).length}/${totalPages}页`,
+          requestBody: {
+            filename: filename,
+            startPage: startPage,
+            endPage: endPage,
+            totalPages: totalPages,
+            annotationStyle: annotationStyle,
+            customPrompt: customPrompt,
+            sessionId: sessionId,
+            boardId: boardId
+          },
+          metadata: {
+            operation: 'batch_annotation',
+            requestType: 'batch_annotation',
+            filename: filename,
+            boardId: boardId,
+            streaming: false,
+            taskBased: true,
+            batchSize: totalPages,
+            successCount: results.filter(r => r.annotation).length,
+            failureCount: results.filter(r => r.error).length
+          }
+        }
+      });
+      window.dispatchEvent(logEvent);
+      
+      console.log(`🎉 批量注释完成！成功: ${results.filter(r => r.annotation).length}页，失败: ${results.filter(r => r.error).length}页`);
+      
+    } catch (error) {
+      // 清理所有页面的加载状态
+      setCourseFiles(prev => {
+        const filePdfs = [...(prev[currentFile.key] || [])];
+        const pdfIndex = filePdfs.findIndex(p => p.id === pdfId);
+        
+        if (pdfIndex !== -1) {
+          const clearedLoadings = {};
+          for (let page = startPage; page <= endPage; page++) {
+            clearedLoadings[page] = false;
+          }
+          
+          filePdfs[pdfIndex] = {
+            ...filePdfs[pdfIndex],
+            pageAnnotationLoadings: {
+              ...filePdfs[pdfIndex].pageAnnotationLoadings,
+              ...clearedLoadings
+            }
+          };
+          
+          return {
+            ...prev,
+            [currentFile.key]: filePdfs
+          };
+        }
+        
+        return prev;
+      });
+      
+      throw error;
+    }
   };
 
   // 改进注释功能

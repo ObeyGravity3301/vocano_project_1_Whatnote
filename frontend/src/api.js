@@ -423,8 +423,9 @@ const api = {
   },
   
   // 生成注释 - 使用并发API
-  generateAnnotation: (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null) => {
+  generateAnnotation: (filename, pageNumber, sessionId = null, currentAnnotation = null, improveRequest = null, boardId = null, systemPrompt = null) => {
     console.log(`🚀 使用并发API生成页面注释: ${filename} 第${pageNumber}页`);
+    console.log(`🎯 系统提示词:`, systemPrompt);
     
     if (!boardId) {
       console.error('❌ 并发API需要boardId');
@@ -439,7 +440,8 @@ const api = {
         pageNumber: pageNumber,
         sessionId: sessionId,
         currentAnnotation: currentAnnotation,
-        improveRequest: improveRequest
+        improveRequest: improveRequest,
+        systemPrompt: systemPrompt
       }
     };
 

@@ -14,6 +14,51 @@
   margin-bottom: 12px;
 }
 
+/* 🎯 新增：头部内容区域 */
+.header-content {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+/* 🎯 新增：折叠按钮样式 */
+.collapse-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  background: #0056b3;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 123, 255, 0.3);
+}
+
+/* 🎯 新增：折叠状态样式 */
+.annotation-style-selector.collapsed {
+  padding: 8px 12px;
+}
+
+.annotation-style-selector.collapsed .selector-header {
+  margin-bottom: 0;
+}
+
+/* 🎯 新增：内容区域动画 */
+.selector-content {
+  transition: all 0.3s ease-in-out;
+}
+
 .selector-label {
   font-weight: 600;
   font-size: 14px;
@@ -86,12 +131,280 @@
   border-top: 1px solid #e9ecef;
 }
 
+/* 🎯 新增：自定义提示词头部样式 */
+.custom-prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
 .custom-prompt-label {
-  display: block;
   font-weight: 600;
   font-size: 13px;
   color: #495057;
-  margin-bottom: 8px;
+}
+
+/* 🎯 新增：方案管理按钮样式 */
+.prompt-manager-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.prompt-manager-btn:hover {
+  background: #0056b3;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+}
+
+/* 🎯 新增：提示词方案管理器样式 */
+.prompt-manager {
+  background: white;
+  border: 2px solid #007bff;
+  border-radius: 8px;
+  margin-top: 12px;
+  box-shadow: 0 4px 12px rgba(0, 123, 255, 0.15);
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.prompt-manager-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #007bff;
+  color: white;
+  border-radius: 6px 6px 0 0;
+}
+
+.prompt-manager-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+}
+
+.close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* 🎯 新增：保存提示词区域样式 */
+.save-prompt-section {
+  padding: 16px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.save-prompt-section h5 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #495057;
+}
+
+.save-prompt-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.prompt-name-input {
+  padding: 8px 12px;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  font-size: 13px;
+  transition: border-color 0.2s ease;
+}
+
+.prompt-name-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.1);
+}
+
+.save-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.save-btn, .cancel-btn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+}
+
+.save-btn {
+  background: #28a745;
+  color: white;
+}
+
+.save-btn:hover {
+  background: #218838;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+}
+
+.cancel-btn {
+  background: #6c757d;
+  color: white;
+}
+
+.cancel-btn:hover {
+  background: #5a6268;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(108, 117, 125, 0.3);
+}
+
+/* 🎯 新增：已保存方案列表样式 */
+.saved-prompts-section {
+  padding: 16px;
+}
+
+.saved-prompts-section h5 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #495057;
+}
+
+.saved-prompts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.saved-prompt-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.saved-prompt-item:hover {
+  background: #e3f2fd;
+  border-color: #2196f3;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(33, 150, 243, 0.15);
+}
+
+.prompt-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.prompt-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #495057;
+  margin-bottom: 4px;
+}
+
+.default-badge {
+  background: #ffc107;
+  color: #212529;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.prompt-preview {
+  font-size: 12px;
+  color: #6c757d;
+  line-height: 1.4;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.prompt-meta {
+  font-size: 10px;
+  color: #adb5bd;
+}
+
+.prompt-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.use-btn, .edit-btn, .delete-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.use-btn {
+  background: #28a745;
+  color: white;
+}
+
+.use-btn:hover {
+  background: #218838;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(40, 167, 69, 0.3);
+}
+
+.edit-btn {
+  background: #17a2b8;
+  color: white;
+}
+
+.edit-btn:hover {
+  background: #138496;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(23, 162, 184, 0.3);
+}
+
+.delete-btn {
+  background: #dc3545;
+  color: white;
+}
+
+.delete-btn:hover {
+  background: #c82333;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
 }
 
 .custom-prompt-input {
@@ -135,6 +448,27 @@
   .style-icon {
     font-size: 14px;
   }
+
+  /* 🎯 新增：移动端提示词管理器样式 */
+  .prompt-manager {
+    max-height: 400px;
+  }
+
+  .saved-prompt-item {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .prompt-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .custom-prompt-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
 }
 
 /* 暗色主题适配 */
@@ -171,5 +505,80 @@
   
   .custom-prompt-help {
     color: #a0aec0;
+  }
+
+  /* 🎯 新增：暗色主题下的提示词管理器样式 */
+  .prompt-manager {
+    background: #4a5568;
+    border-color: #718096;
+  }
+
+  .prompt-manager-header {
+    background: #2b6cb0;
+  }
+
+  .save-prompt-section {
+    border-color: #718096;
+  }
+
+  .save-prompt-section h5,
+  .saved-prompts-section h5 {
+    color: #e2e8f0;
+  }
+
+  .prompt-name-input {
+    background: #2d3748;
+    border-color: #718096;
+    color: #e2e8f0;
+  }
+
+  .saved-prompt-item {
+    background: #2d3748;
+    border-color: #718096;
+  }
+
+  .saved-prompt-item:hover {
+    background: #3d4a5c;
+    border-color: #2b6cb0;
+  }
+
+  .prompt-name {
+    color: #e2e8f0;
+  }
+
+  .prompt-preview {
+    color: #a0aec0;
+  }
+
+  .prompt-meta {
+    color: #718096;
+  }
+
+  /* 🎯 暗色主题下的折叠按钮 */
+  .collapse-btn {
+    background: #2b6cb0;
+  }
+
+  .collapse-btn:hover {
+    background: #2c5aa0;
+  }
+}
+
+/* 🎯 新增：折叠功能增强样式 */
+@media (max-width: 768px) {
+  .collapse-btn {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+  }
+
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .annotation-style-selector.collapsed {
+    padding: 6px 10px;
   }
 } 

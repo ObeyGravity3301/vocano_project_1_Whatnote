@@ -354,4 +354,314 @@
 }
 
 /* 响应式样式 */
-@media (max-width: 480px) {  .note-editor-header {    flex-direction: column;    align-items: flex-start;    gap: 8px;  }    .note-actions {    width: 100%;    justify-content: flex-end;  }}/* 专家LLM步骤进度动画 */@keyframes pulse {  0% {    opacity: 1;    transform: scale(1);  }  50% {    opacity: 0.6;    transform: scale(1.2);  }  100% {    opacity: 1;    transform: scale(1);  }}/* 步骤消息样式 */.step-message {  animation: slideInLeft 0.3s ease-out;}@keyframes slideInLeft {  from {    opacity: 0;    transform: translateX(-20px);  }  to {    opacity: 1;    transform: translateX(0);  }}/* 调试面板响应内容样式 */.debug-log-response {  max-height: 400px;  overflow-y: auto;  padding: 8px;  background-color: #fafafa;  border-radius: 4px;  margin-top: 8px;}.debug-log-response h1,.debug-log-response h2,.debug-log-response h3 {  margin-top: 16px;  margin-bottom: 8px;}.debug-log-response p {  margin-bottom: 8px;  line-height: 1.6;}.debug-log-response ul,.debug-log-response ol {  margin-bottom: 8px;  padding-left: 20px;}.debug-log-response li {  margin-bottom: 4px;} 
+@media (max-width: 480px) {
+  .note-editor-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .note-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+/* 专家LLM步骤进度动画 */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.2);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 步骤消息样式 */
+.step-message {
+  animation: slideInLeft 0.3s ease-out;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 调试面板响应内容样式 */
+.debug-log-response {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 8px;
+  background-color: #fafafa;
+  border-radius: 4px;
+  margin-top: 8px;
+}
+
+.debug-log-response h1,
+.debug-log-response h2,
+.debug-log-response h3 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.debug-log-response p {
+  margin-bottom: 8px;
+  line-height: 1.6;
+}
+
+.debug-log-response ul,
+.debug-log-response ol {
+  margin-bottom: 8px;
+  padding-left: 20px;
+}
+
+.debug-log-response li {
+  margin-bottom: 4px;
+}
+
+/* 批量注释功能区样式 */
+.batch-annotation-section {
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-bottom: 1px solid #e8e8e8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 批量注释进度容器 */
+.batch-progress-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  background: linear-gradient(135deg, #fff7e6 0%, #fff2e6 100%);
+  border-radius: 8px;
+  border: 1px solid #ffd591;
+}
+
+.batch-progress-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.batch-progress-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: #d46b08;
+}
+
+.batch-current-page {
+  font-size: 12px;
+  color: #ad6800;
+}
+
+/* 批量注释进度条 */
+.batch-progress-bar {
+  flex: 2;
+  height: 6px;
+  background-color: #fff7e6;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1890ff 0%, #722ed1 100%);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.batch-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.3) 50%, transparent 100%);
+  animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* 批量配置弹窗样式 */
+.batch-config-container {
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.batch-section {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.batch-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.batch-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #262626;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 批量选项样式 */
+.batch-option {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.batch-option:hover {
+  border-color: #d9d9d9;
+  background-color: #fafafa;
+}
+
+.batch-option-desc {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #666;
+  padding-left: 24px;
+}
+
+.batch-option-controls {
+  margin-top: 8px;
+  padding-left: 24px;
+}
+
+.batch-option-controls .ant-radio-group {
+  margin-bottom: 8px;
+}
+
+/* 注释风格选项 */
+.annotation-style-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.annotation-style-options .ant-radio-wrapper {
+  padding: 8px 12px;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+  margin: 0;
+  transition: all 0.2s ease;
+}
+
+.annotation-style-options .ant-radio-wrapper:hover {
+  border-color: #1890ff;
+  background-color: #f6ffed;
+}
+
+.annotation-style-options .ant-radio-wrapper-checked {
+  border-color: #1890ff;
+  background-color: #e6f7ff;
+}
+
+/* 自定义提示词区域 */
+.custom-prompt-section {
+  padding: 12px;
+  background-color: #f9f9f9;
+  border-radius: 6px;
+  border: 1px dashed #d9d9d9;
+}
+
+/* 注意事项样式 */
+.batch-warnings {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.batch-warnings li {
+  margin-bottom: 8px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.batch-warnings li::marker {
+  color: #faad14;
+}
+
+/* 批量注释按钮增强效果 */
+.batch-annotation-section button {
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.batch-annotation-section button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3);
+}
+
+.batch-annotation-section button:active {
+  transform: translateY(0);
+}
+
+/* 批量注释响应式设计 */
+@media (max-width: 768px) {
+  .batch-progress-container {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .batch-progress-bar {
+    width: 100%;
+  }
+  
+  .annotation-style-options {
+    grid-template-columns: 1fr;
+  }
+  
+  .batch-option-controls .ant-radio-group {
+    flex-wrap: wrap;
+  }
+}
+
+/* 美化配置弹窗的滚动条 */
+.batch-config-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.batch-config-container::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.batch-config-container::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.batch-config-container::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
