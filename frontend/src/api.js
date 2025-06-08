@@ -138,9 +138,14 @@ const api = {
   },
 
   // 上传图片专用API
-  uploadImage: async (file) => {
+  uploadImage: async (file, windowId = null) => {
     const formData = new FormData();
     formData.append("file", file);
+    
+    // 如果提供了窗口ID，添加到表单数据中
+    if (windowId) {
+      formData.append("window_id", windowId);
+    }
     
     // 使用专门的图片上传API
     return apiRequest('/images/upload', {

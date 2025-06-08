@@ -3933,6 +3933,45 @@ function App() {
           message.success('所有窗口已关闭');
         }
         break;
+
+      case 'create_text_window':
+        // 新建文本框
+        if (data && data.boardId) {
+          console.log('通过右键菜单新建文本框:', data.boardId);
+          handleCreateCustomWindow(data.boardId, 'text');
+        } else if (currentFile) {
+          console.log('使用当前展板新建文本框:', currentFile.key);
+          handleCreateCustomWindow(currentFile.key, 'text');
+        } else {
+          message.error('请先选择一个展板');
+        }
+        break;
+
+      case 'create_image_window':
+        // 新建图片框
+        if (data && data.boardId) {
+          console.log('通过右键菜单新建图片框:', data.boardId);
+          handleCreateCustomWindow(data.boardId, 'image');
+        } else if (currentFile) {
+          console.log('使用当前展板新建图片框:', currentFile.key);
+          handleCreateCustomWindow(currentFile.key, 'image');
+        } else {
+          message.error('请先选择一个展板');
+        }
+        break;
+
+      case 'create_video_window':
+        // 新建视频框
+        if (data && data.boardId) {
+          console.log('通过右键菜单新建视频框:', data.boardId);
+          handleCreateCustomWindow(data.boardId, 'video');
+        } else if (currentFile) {
+          console.log('使用当前展板新建视频框:', currentFile.key);
+          handleCreateCustomWindow(currentFile.key, 'video');
+        } else {
+          message.error('请先选择一个展板');
+        }
+        break;
         
       default:
         console.log('未处理的命令:', command);
@@ -4227,19 +4266,7 @@ function App() {
   };
 
   // 监听全局菜单命令事件
-  useEffect(() => {
-    const handleMenuCommand = (event) => {
-      const { command, data } = event.detail;
-      console.log('收到全局菜单命令事件:', command, data);
-      handleContextMenuCommand(command, data);
-    };
-
-    window.addEventListener('menu-command', handleMenuCommand);
-    
-    return () => {
-      window.removeEventListener('menu-command', handleMenuCommand);
-    };
-  }, [currentFile, courseFiles]); // 依赖currentFile和courseFiles以确保命令处理中的状态是最新的
+  // 注册全局菜单命令事件处理器已移除，现在直接使用onCommand回调
 
   // 获取展板的自定义窗口
   const loadCustomWindows = async (boardId) => {
@@ -4371,27 +4398,111 @@ function App() {
   // 删除自定义窗口
   const deleteCustomWindow = async (boardId, windowId) => {
     try {
+      console.log(`🗑️ [删除窗口] 开始删除窗口: ${windowId}, 展板: ${boardId}`);
+      
       const response = await api.delete(`/api/boards/${boardId}/windows/${windowId}`);
-      if (response.status === 200) {
+      console.log(`✅ [删除窗口] API响应:`, response);
+      
+      // 检查响应是否成功（API返回{success: true}）
+      if (response && response.success) {
+        console.log(`🔄 [删除窗口] 更新前端状态...`);
+        
         // 从状态中移除窗口
         setCustomWindows(prev => ({
           ...prev,
           [boardId]: prev[boardId]?.filter(window => window.id !== windowId) || []
         }));
         
-        setCustomWindowsVisible(prev => ({
-          ...prev,
-          [boardId]: {
-            ...prev[boardId],
-            [windowId]: false
-          }
-        }));
+        // 从可见性状态中移除窗口
+        setCustomWindowsVisible(prev => {
+          const newVisibility = { ...prev[boardId] };
+          delete newVisibility[windowId];
+          return {
+            ...prev,
+            [boardId]: newVisibility
+          };
+        });
         
+        console.log(`✅ [删除窗口] 窗口删除成功: ${windowId}`);
         message.success('窗口已删除');
+      } else {
+        console.error(`❌ [删除窗口] 删除失败，API返回:`, response);
+        message.error('删除窗口失败');
       }
     } catch (error) {
-      console.error('删除窗口失败:', error);
+      console.error('❌ [删除窗口] 删除窗口出错:', error);
       message.error('删除窗口失败');
+    }
+  };
+
+  // 防重复创建标记 - 使用更精确的标记
+  const [creatingWindows, setCreatingWindows] = useState(new Set());
+  
+  // 创建自定义窗口
+  const handleCreateCustomWindow = async (boardId, windowType) => {
+    const createKey = `${boardId}-${windowType}`;
+    
+    // 防止重复创建同类型窗口
+    if (creatingWindows.has(createKey)) {
+      console.log(`🚫 [右键菜单] 正在创建${windowType}窗口，跳过重复请求:`, createKey);
+      return;
+    }
+    
+    try {
+      setCreatingWindows(prev => new Set([...prev, createKey]));
+      console.log(`🎯 [右键菜单] 创建${windowType}窗口，展板ID:`, boardId);
+      
+      // 生成默认标题
+      const typeMap = {
+        text: '文本框',
+        image: '图片框', 
+        video: '视频框'
+      };
+      const defaultTitle = `新${typeMap[windowType] || windowType}`;
+      
+      // 根据窗口类型设置默认大小
+      const sizeMap = {
+        text: { width: 300, height: 200 },
+        image: { width: 400, height: 350 },
+        video: { width: 500, height: 400 }
+      };
+      
+      // 构建窗口数据
+      const windowData = {
+        type: windowType,
+        title: defaultTitle,
+        content: "",
+        position: { x: 100, y: 100 },
+        size: sizeMap[windowType] || { width: 300, height: 200 },
+        style: {}
+      };
+      
+      console.log(`📤 [右键菜单] 发送窗口创建请求:`, windowData);
+      
+      // 调用后端API创建窗口
+      const response = await api.post(`/api/boards/${boardId}/windows`, {
+        window: windowData
+      });
+      
+      console.log(`✅ [右键菜单] 窗口创建成功:`, response);
+      
+      // 重新加载窗口数据
+      await loadCustomWindows(boardId);
+      
+      message.success(`${typeMap[windowType]}已创建`);
+      
+    } catch (error) {
+      console.error('❌ [右键菜单] 创建窗口失败:', error);
+      message.error(`创建${windowType}窗口失败`);
+    } finally {
+      // 延迟重置标记，防止连续快速点击
+      setTimeout(() => {
+        setCreatingWindows(prev => {
+          const next = new Set(prev);
+          next.delete(createKey);
+          return next;
+        });
+      }, 2000);
     }
   };
 
@@ -4495,15 +4606,7 @@ function App() {
           title={window.title}
           defaultPosition={getSmartPosition(index, window.position)}
           defaultSize={window.size || config.defaultSize}
-          onClose={() => {
-            setCustomWindowsVisible(prev => ({
-              ...prev,
-              [boardId]: {
-                ...prev[boardId],
-                [window.id]: false
-              }
-            }));
-          }}
+          onClose={() => deleteCustomWindow(boardId, window.id)}
           onDragStop={async (e, data) => {
             // 保存位置到后端
             console.log(`窗口 ${window.id} 移动到:`, data);

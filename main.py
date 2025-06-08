@@ -2,7 +2,7 @@ import os
 import shutil
 import logging
 import json
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, WebSocket, Query, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Body, WebSocket, Query, BackgroundTasks, Form
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any
@@ -868,6 +868,19 @@ async def add_board_window(
         if not window_data or "type" not in window_data:
             raise HTTPException(status_code=400, detail='窗口数据不能为空且必须指定类型')
         
+        # 获取现有窗口列表以生成唯一标题
+        from board_logger import BoardLogger
+        board_logger_instance = BoardLogger()
+        log_data = board_logger_instance.load_log(board_id)
+        existing_windows = log_data.get("windows", [])
+        
+        # 生成唯一的窗口标题
+        base_title = window_data.get('title', '新窗口')
+        unique_title = generate_unique_window_title(existing_windows, base_title)
+        window_data['title'] = unique_title
+        
+        logger.info(f'生成唯一标题: {base_title} -> {unique_title}')
+        
         # 添加窗口
         window_id = board_logger.add_window(board_id, window_data)
         
@@ -875,7 +888,7 @@ async def add_board_window(
         butler_llm.update_board_info(board_id)
         
         logger.info(f'窗口添加成功: {window_id}')
-        return {"window_id": window_id}
+        return {"window_id": window_id, "title": unique_title}
     except Exception as e:
         logger.error(f'添加窗口失败: {str(e)}')
         raise HTTPException(status_code=500, detail=f'添加窗口失败: {str(e)}')
@@ -896,8 +909,6 @@ async def remove_board_window(board_id: str, window_id: str):
         
         logger.info(f'窗口移除成功: {window_id}')
         return {"success": True}
-    except Exception as e:
-        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -926,8 +937,6 @@ async def update_board_window(
         
         logger.info(f'窗口更新成功: {window_id}')
         return {"success": True}
-    except Exception as e:
-        pass
     except HTTPException:
         raise
     except Exception as e:
@@ -1156,9 +1165,12 @@ async def api_check_material_file(filename: str):
     return await check_material_file(filename)
 
 @app.post('/api/images/upload')
-async def upload_image(file: UploadFile = File(...)):
+async def upload_image(
+    file: UploadFile = File(...),
+    window_id: Optional[str] = Form(None)
+):
     """专门用于图片上传的API"""
-    logger.info(f"收到图片上传请求: {file.filename}")
+    logger.info(f"收到图片上传请求: {file.filename}, 窗口ID: {window_id}")
     
     # 验证是否为图片文件
     allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
@@ -1175,7 +1187,12 @@ async def upload_image(file: UploadFile = File(...)):
     # 生成唯一文件名（添加时间戳避免冲突）
     timestamp = int(time.time())
     name, ext = os.path.splitext(file.filename)
-    unique_filename = f"{name}_{timestamp}{ext}"
+    
+    # 如果提供了窗口ID，将其包含在文件名中（类似视频的命名方式）
+    if window_id:
+        unique_filename = f"{name}_{window_id}_{timestamp}{ext}"
+    else:
+        unique_filename = f"{name}_{timestamp}{ext}"
     
     save_path = os.path.join(images_dir, unique_filename)
     
@@ -1192,7 +1209,8 @@ async def upload_image(file: UploadFile = File(...)):
             "filename": unique_filename,
             "original_filename": file.filename,
             "url": image_url,  
-            "path": save_path
+            "path": save_path,
+            "window_id": window_id
         }
     except Exception as e:
         logger.error(f"图片保存失败: {str(e)}")
@@ -1259,7 +1277,13 @@ async def upload_video(file: UploadFile = File(...)):
     # 生成唯一文件名（添加时间戳避免冲突）
     timestamp = int(time.time())
     name, ext = os.path.splitext(file.filename)
-    unique_filename = f"{name}_{timestamp}{ext}"
+    
+    # 如果提供了窗口ID，将其包含在文件名中（类似视频的命名方式）
+    window_id = window_id  # 获取窗口ID参数
+    if window_id:
+        unique_filename = f"{name}_{window_id}_{timestamp}{ext}"
+    else:
+        unique_filename = f"{name}_{timestamp}{ext}"
     
     save_path = os.path.join(videos_dir, unique_filename)
     

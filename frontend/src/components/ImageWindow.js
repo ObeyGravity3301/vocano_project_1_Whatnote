@@ -180,8 +180,8 @@ const ImageWindow = ({
       const previewUrl = URL.createObjectURL(file);
       setImageUrl(previewUrl);
 
-      // 上传到服务器 - 使用专门的图片上传API
-      const uploadResponse = await api.uploadImage(file);
+      // 上传到服务器 - 使用专门的图片上传API，传递窗口ID
+      const uploadResponse = await api.uploadImage(file, window.id);
       console.log(`📤 [图片窗口] 图片上传API响应:`, uploadResponse);
       
       if (uploadResponse && uploadResponse.success && uploadResponse.url) {

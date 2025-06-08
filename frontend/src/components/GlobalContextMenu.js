@@ -12,7 +12,9 @@ import {
   FilePdfOutlined,
   CopyOutlined,
   ScissorOutlined,
-  RobotOutlined
+  RobotOutlined,
+  VideoCameraOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 import './ContextMenu.css';
 
@@ -436,6 +438,31 @@ const GlobalContextMenu = ({ onCommand }) => {
           },
           { type: 'divider' },
           {
+            label: '新建...',
+            icon: <PlusOutlined />,
+            children: [
+              {
+                label: '新建文本框',
+                icon: <EditOutlined />,
+                command: 'create_text_window',
+                data
+              },
+              {
+                label: '新建图片框',
+                icon: <PictureOutlined />,
+                command: 'create_image_window',
+                data
+              },
+              {
+                label: '新建视频框',
+                icon: <VideoCameraOutlined />,
+                command: 'create_video_window',
+                data
+              }
+            ]
+          },
+          { type: 'divider' },
+          {
             label: '上传PDF文件',
             icon: <FilePdfOutlined />,
             command: 'upload_pdf',
@@ -474,18 +501,20 @@ const GlobalContextMenu = ({ onCommand }) => {
     if (item.command) {
       console.log('执行命令:', item.command, item.data || targetData);
       
-      // 触发全局菜单命令事件，通知相关组件
-      const commandEvent = new CustomEvent('menu-command', {
-        detail: {
-          command: item.command,
-          data: item.data || targetData
-        }
-      });
-      window.dispatchEvent(commandEvent);
-      
-      // 如果提供了回调，也执行回调
+      // 优先使用回调函数，如果没有回调再使用全局事件
       if (onCommand) {
+        console.log('🎯 [菜单] 使用回调函数执行命令');
         onCommand(item.command, item.data || targetData);
+      } else {
+        console.log('🎯 [菜单] 使用全局事件执行命令');
+        // 触发全局菜单命令事件，通知相关组件
+        const commandEvent = new CustomEvent('menu-command', {
+          detail: {
+            command: item.command,
+            data: item.data || targetData
+          }
+        });
+        window.dispatchEvent(commandEvent);
       }
     } else {
       console.warn('无法执行命令:', item);
